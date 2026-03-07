@@ -80,6 +80,7 @@ export interface TaskAnalysis {
     screen: string;
     sprintGoal: string;
     recordLink: string;
+    blockedBy?: string;
 }
 
 export interface InterrogationLogEntry {

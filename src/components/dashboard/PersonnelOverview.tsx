@@ -195,12 +195,17 @@ export function PersonnelOverview({ summaries, highRiskIds, onTaskClick }: Perso
                                             </div>
                                             {riskBadge(task)}
                                         </div>
-                                        <div className="flex items-center gap-2 mt-1.5">
+                                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                                             {statusBadge(task.currentStatus)}
                                             {task.isStale && (
                                                 <span className="text-[9px] text-amber-400 font-mono flex items-center gap-1">
                                                     <Clock className="w-2.5 h-2.5" />
                                                     STALE {formatStaleHours(task.staleDurationMs)}
+                                                </span>
+                                            )}
+                                            {task.blockedBy && (
+                                                <span className="text-[9px] font-mono flex items-center gap-1 bg-red-950/40 text-red-300 px-1.5 py-0.5 rounded border border-red-900/50">
+                                                    <span className="opacity-70">Blocked by</span> {task.blockedBy}
                                                 </span>
                                             )}
                                         </div>

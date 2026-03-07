@@ -50,7 +50,7 @@ export default function Home() {
 
   const { highRiskIds, toggleHighRisk, isHighRisk } = useHighRisk();
   // useInterrogationLog removed
-  const { addNote, updateNote, deleteNote, getNotesForTask } = useMeetingNotes();
+  const { addNote, updateNote, deleteNote, getNotesForTask, notes } = useMeetingNotes();
 
   useEffect(() => {
     let ignore = false;
@@ -80,7 +80,7 @@ export default function Home() {
   }, [activeSprint]);
 
   // ── Workflow Analysis ──────────────────────────────────────────
-  const analyses = useMemo(() => analyzeAllTasks(rawLogs), [rawLogs]);
+  const analyses = useMemo(() => analyzeAllTasks(rawLogs, notes), [rawLogs, notes]);
   const personSummaries = useMemo(() => getPersonSummaries(rawLogs, analyses), [rawLogs, analyses]);
 
   // ── Stats ──────────────────────────────────────────────────────

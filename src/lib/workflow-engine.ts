@@ -5,6 +5,7 @@ import {
     StatusHistoryEntry,
     RiskLevel,
     WORKFLOW_STATUSES,
+    MeetingNote,
 } from './types';
 
 // ── Status Helpers ────────────────────────────────────────────────
@@ -71,7 +72,7 @@ function detectDoomLoops(history: StatusHistoryEntry[]): number {
 
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-export function analyzeTask(taskLogs: RawLogEvent[]): TaskAnalysis {
+export function analyzeTask(taskLogs: RawLogEvent[], taskNotes: MeetingNote[] = []): TaskAnalysis {
     // Sort chronologically
     const sorted = [...taskLogs].sort(
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -106,6 +107,9 @@ export function analyzeTask(taskLogs: RawLogEvent[]): TaskAnalysis {
     const isCompleted = latest.status === 'Completed' || latest.status === 'Staging Passed';
     const isStale = !isCompleted && timeSinceLastChange > STALE_THRESHOLD_MS;
 
+    const latestNote = [...taskNotes].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    const blockedBy = latestNote?.isStall && latestNote.blockedBy ? latestNote.blockedBy : undefined;
+
     return {
         taskId: latest.taskId,
         taskName: latest.taskName,
@@ -121,12 +125,13 @@ export function analyzeTask(taskLogs: RawLogEvent[]): TaskAnalysis {
         screen: latest.screen,
         sprintGoal: latest.sprintGoal,
         recordLink: latest.recordLink,
+        blockedBy,
     };
 }
 
 // ── Batch Analysis ────────────────────────────────────────────────
 
-export function analyzeAllTasks(logs: RawLogEvent[]): Record<string, TaskAnalysis> {
+export function analyzeAllTasks(logs: RawLogEvent[], meetingNotes: Record<string, MeetingNote[]> = {}): Record<string, TaskAnalysis> {
     const byTask: Record<string, RawLogEvent[]> = {};
     logs.forEach((log) => {
         if (!byTask[log.taskId]) byTask[log.taskId] = [];
@@ -135,7 +140,7 @@ export function analyzeAllTasks(logs: RawLogEvent[]): Record<string, TaskAnalysi
 
     const result: Record<string, TaskAnalysis> = {};
     Object.entries(byTask).forEach(([taskId, taskLogs]) => {
-        result[taskId] = analyzeTask(taskLogs);
+        result[taskId] = analyzeTask(taskLogs, meetingNotes[taskId] || []);
     });
 
     return result;
@@ -182,9 +187,15 @@ export function getPersonSummaries(
 
     // Use latest log entry per task to determine current person
     Object.values(analyses).forEach((analysis) => {
-        const persons = analysis.currentPerson
-            ? analysis.currentPerson.split(',').map((p) => p.trim()).filter(Boolean)
-            : ['Unassigned'];
+        const persons = new Set(
+            analysis.currentPerson
+                ? analysis.currentPerson.split(',').map((p) => p.trim()).filter(Boolean)
+                : ['Unassigned']
+        );
+
+        if (analysis.blockedBy) {
+            persons.add(analysis.blockedBy);
+        }
 
         persons.forEach((person) => {
             if (!personTaskIds[person]) personTaskIds[person] = new Set();
@@ -198,7 +209,10 @@ export function getPersonSummaries(
                 .map((id) => analyses[id])
                 .filter(Boolean);
 
-            const blockingTasks = tasks.filter((t) => isBottleneckStatus(t.currentStatus));
+            const blockingTasks = tasks.filter((t) => {
+                if (t.blockedBy) return t.blockedBy === person;
+                return isBottleneckStatus(t.currentStatus);
+            });
             const staleTasks = tasks.filter((t) => t.isStale);
             const suggestion = generateSuggestion(tasks);
 
