@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { TimelineSegment, TaskAnalysis, MeetingNote } from '@/lib/types';
 import { isBottleneckStatus, getStatusSeverity } from '@/lib/workflow-engine';
-import { Sheet, SheetHeader, SheetTitle, SheetDescription } from '../ui/sheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../ui/sheet';
 import { TaskTimeline } from './TaskTimeline';
 import { Badge } from '../ui/badge';
 import { format } from 'date-fns';
@@ -74,7 +74,7 @@ export function StandupInspector({
 
     // Build list of people for the "Blocked by" dropdown
     const assignedPeople = taskAnalysis
-        ? [...new Set(taskAnalysis.statusHistory.map((h) => h.person).flatMap((p) => p.split(',').map((n) => n.trim())).filter(Boolean))]
+        ? [...new Set(taskAnalysis.statusHistory.map((h) => h.person || '').flatMap((p) => p.split(',').map((n) => n.trim())).filter(Boolean))]
         : [];
 
     const handleAddOrUpdateMeetingNote = () => {
@@ -121,7 +121,7 @@ export function StandupInspector({
 
     return (
         <Sheet open={!!segment} onOpenChange={(open) => !open && onClose()}>
-            <div className="flex flex-col h-full overflow-y-auto">
+            <SheetContent open={!!segment} onOpenChange={(open: boolean) => !open && onClose()} className="flex flex-col h-full overflow-y-auto sm:max-w-xl w-[90%] p-6">
                 <SheetHeader className="mb-4">
                     <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-zinc-400 font-bold bg-zinc-900 border border-zinc-800 px-2 flex items-center h-6 rounded-md uppercase text-xs">
@@ -144,9 +144,9 @@ export function StandupInspector({
                         {segment.taskName}
                     </SheetTitle>
                     <SheetDescription className="mt-1 flex items-center gap-2">
-                        <span>{format(segment.startTime, 'MMM dd, HH:mm')}</span>
+                        <span>{segment.startTime instanceof Date && !isNaN(segment.startTime.getTime()) ? format(segment.startTime, 'MMM dd, HH:mm') : 'Unknown Start'}</span>
                         <span>&rarr;</span>
-                        <span>{format(segment.endTime, 'MMM dd, HH:mm')}</span>
+                        <span>{segment.endTime instanceof Date && !isNaN(segment.endTime.getTime()) ? format(segment.endTime, 'MMM dd, HH:mm') : 'Unknown End'}</span>
                     </SheetDescription>
                 </SheetHeader>
 
@@ -362,7 +362,7 @@ export function StandupInspector({
                         />
                     )}
                 </div>
-            </div>
+            </SheetContent>
         </Sheet>
     );
 }

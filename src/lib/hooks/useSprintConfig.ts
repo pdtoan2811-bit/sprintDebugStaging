@@ -26,37 +26,56 @@ export function useSprintConfig() {
     const [isLoaded, setIsLoaded] = useState(false);
 
     useEffect(() => {
-        try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) {
-                setConfigs(JSON.parse(stored));
-            } else {
-                setConfigs(DEFAULT_CONFIG);
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_CONFIG));
-            }
+        fetch('/api/data')
+            .then(res => res.json())
+            .then(data => {
+                if (data) {
+                    try {
+                        if (data[STORAGE_KEY]) {
+                            setConfigs(JSON.parse(data[STORAGE_KEY] || '[]'));
+                        } else {
+                            // First time load fallback
+                            setConfigs(DEFAULT_CONFIG);
+                            fetch('/api/data', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(DEFAULT_CONFIG) })
+                            }).catch(() => { });
+                        }
 
-            const override = localStorage.getItem(OVERRIDE_KEY);
-            if (override) {
-                setManualOverride(override);
-            }
-        } catch (e) {
-            console.error('Failed to load sprint config', e);
-        }
-        setIsLoaded(true);
+                        if (data[OVERRIDE_KEY]) {
+                            setManualOverride(data[OVERRIDE_KEY]);
+                        }
+                    } catch (e) {
+                        setConfigs(DEFAULT_CONFIG);
+                    }
+                } else {
+                    setConfigs(DEFAULT_CONFIG);
+                }
+                setIsLoaded(true);
+            })
+            .catch(() => {
+                setConfigs(DEFAULT_CONFIG);
+                setIsLoaded(true);
+            });
     }, []);
 
     const saveConfigs = useCallback((newConfigs: SprintConfig[]) => {
         setConfigs(newConfigs);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(newConfigs));
+        fetch('/api/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(newConfigs) })
+        }).catch(err => console.error('Failed to save sprint config', err));
     }, []);
 
     const saveManualOverride = useCallback((sprintNumber: string | null) => {
         setManualOverride(sprintNumber);
-        if (sprintNumber) {
-            localStorage.setItem(OVERRIDE_KEY, sprintNumber);
-        } else {
-            localStorage.removeItem(OVERRIDE_KEY);
-        }
+        fetch('/api/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [OVERRIDE_KEY]: sprintNumber })
+        }).catch(err => console.error('Failed to save manual override', err));
     }, []);
 
     const getCurrentSprint = useCallback((): SprintConfig | undefined => {

@@ -9,20 +9,26 @@ export function useHighRisk() {
     const [isLoaded, setIsLoaded] = useState(false);
 
     useEffect(() => {
-        try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) {
-                const parsed = JSON.parse(stored) as string[];
-                setHighRiskIds(new Set(parsed));
-            }
-        } catch (e) {
-            console.error('Failed to parse high risk IDs', e);
-        }
-        setIsLoaded(true);
+        fetch('/api/data')
+            .then(res => res.json())
+            .then(data => {
+                if (data && data[STORAGE_KEY]) {
+                    try {
+                        const parsed = JSON.parse(data[STORAGE_KEY]) as string[];
+                        setHighRiskIds(new Set(parsed));
+                    } catch (e) { }
+                }
+                setIsLoaded(true);
+            })
+            .catch(() => setIsLoaded(true));
     }, []);
 
     const persist = useCallback((ids: Set<string>) => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(ids)));
+        fetch('/api/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(Array.from(ids)) })
+        }).catch(err => console.error('Failed to save high risk IDs', err));
     }, []);
 
     const toggleHighRisk = useCallback((taskId: string) => {

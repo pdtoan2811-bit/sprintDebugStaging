@@ -10,19 +10,25 @@ export function useMeetingNotes() {
     const [isLoaded, setIsLoaded] = useState(false);
 
     useEffect(() => {
-        try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) {
-                setNotes(JSON.parse(stored));
-            }
-        } catch (e) {
-            console.error('Failed to parse meeting notes', e);
-        }
-        setIsLoaded(true);
+        fetch('/api/data')
+            .then(res => res.json())
+            .then(data => {
+                if (data && data[STORAGE_KEY]) {
+                    try {
+                        setNotes(JSON.parse(data[STORAGE_KEY] || '{}'));
+                    } catch (e) { }
+                }
+                setIsLoaded(true);
+            })
+            .catch(() => setIsLoaded(true));
     }, []);
 
     const persist = useCallback((data: Record<string, MeetingNote[]>) => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        fetch('/api/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(data) })
+        }).catch(err => console.error('Failed to save meeting notes', err));
     }, []);
 
     const addNote = useCallback((note: MeetingNote) => {
