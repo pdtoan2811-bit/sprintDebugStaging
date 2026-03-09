@@ -58,6 +58,9 @@ export default function Home() {
     async function loadData() {
       setLoading(true);
       try {
+        const migrationModule = await import('@/lib/migration');
+        await migrationModule.migrateLocalStorageToAPI();
+
         const logs = await fetchLogs(activeSprint || undefined);
         if (!ignore) {
           setRawLogs(logs);
