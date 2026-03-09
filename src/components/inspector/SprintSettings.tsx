@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Sheet, SheetHeader, SheetTitle, SheetDescription } from '../ui/sheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../ui/sheet';
 import { useSprintConfig, SprintConfig } from '@/lib/hooks/useSprintConfig';
 import { Plus, Trash2, Save, Undo2 } from 'lucide-react';
 import { DatePicker } from '../ui/date-picker';
@@ -53,7 +53,7 @@ export function SprintSettings({ open, onClose }: SprintSettingsProps) {
 
     return (
         <Sheet open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <div className="flex flex-col h-full overflow-y-auto pr-2">
+            <SheetContent open={open} onOpenChange={(isOpen: boolean) => !isOpen && onClose()} side="right" className="flex flex-col h-full overflow-y-auto pr-2 sm:max-w-xl w-[90%] p-6">
                 <SheetHeader className="mb-6">
                     <SheetTitle className="text-xl">Settings</SheetTitle>
                     <SheetDescription>
@@ -153,7 +153,7 @@ export function SprintSettings({ open, onClose }: SprintSettingsProps) {
                         <Save className="w-4 h-4" /> Save Settings
                     </button>
                 </div>
-            </div>
+            </SheetContent>
         </Sheet>
     );
 }

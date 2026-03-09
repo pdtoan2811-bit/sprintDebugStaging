@@ -16,6 +16,7 @@ import { useMeetingNotes } from '@/lib/hooks/useMeetingNotes';
 import { format } from 'date-fns';
 import { useSprintConfig } from '@/lib/hooks/useSprintConfig';
 import { SprintSettings } from '@/components/inspector/SprintSettings';
+import { DataManagementModal } from '@/components/dashboard/DataManagementModal';
 import {
   Activity,
   Calendar,
@@ -164,6 +165,7 @@ export default function Home() {
             <Users className="w-3 h-3 text-purple-400" />
             <span className="font-mono">{data.length} Members</span>
           </Badge>
+          <DataManagementModal />
           <button
             onClick={() => setShowSettings(true)}
             className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-md transition-colors"

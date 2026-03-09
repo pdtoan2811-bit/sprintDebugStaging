@@ -12,17 +12,52 @@ export function Sheet({ open, onOpenChange, children }: SheetProps) {
     if (!open) return null;
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/80" onClick={() => onOpenChange(false)}>
+        <>
+            {React.Children.map(children, child => {
+                if (React.isValidElement(child) && (child.type === SheetTrigger || child.type === SheetContent)) {
+                    return React.cloneElement(child as React.ReactElement<any>, { open, onOpenChange });
+                }
+                return child;
+            })}
+        </>
+    );
+}
+
+export function SheetTrigger({ asChild, children, open, onOpenChange }: any) {
+    if (asChild && React.isValidElement(children)) {
+        return React.cloneElement(children as React.ReactElement<any>, {
+            onClick: (e: any) => {
+                onOpenChange?.(true);
+                const props = children.props as any;
+                if (props && typeof props.onClick === 'function') {
+                    props.onClick(e);
+                }
+            }
+        });
+    }
+    return (
+        <button onClick={() => onOpenChange?.(true)}>
+            {children}
+        </button>
+    );
+}
+
+export function SheetContent({ side = "right", className, children, open, onOpenChange }: any) {
+    if (!open) return null;
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/80" onClick={() => onOpenChange?.(false)}>
             <div
                 className={cn(
                     "fixed z-50 gap-4 bg-zinc-950 p-6 shadow-lg transition ease-in-out overflow-y-auto",
-                    "inset-y-0 right-0 h-full w-[90%] border-l border-zinc-800 sm:max-w-xl"
+                    "inset-y-0 right-0 h-full border-l border-zinc-800",
+                    className
                 )}
                 onClick={(e) => e.stopPropagation()}
             >
                 {children}
                 <button
-                    onClick={() => onOpenChange(false)}
+                    onClick={() => onOpenChange?.(false)}
                     className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-zinc-950 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-zinc-300 focus:ring-offset-2"
                 >
                     <X className="h-4 w-4 text-zinc-400" />
@@ -30,7 +65,7 @@ export function Sheet({ open, onOpenChange, children }: SheetProps) {
                 </button>
             </div>
         </div>
-    )
+    );
 }
 
 interface SheetChildProps {
