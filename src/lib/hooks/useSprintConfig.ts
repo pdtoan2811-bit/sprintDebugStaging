@@ -36,11 +36,6 @@ export function useSprintConfig() {
                         } else {
                             // First time load fallback
                             setConfigs(DEFAULT_CONFIG);
-                            fetch('/api/data', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(DEFAULT_CONFIG) })
-                            }).catch(() => { });
                         }
 
                         if (data[OVERRIDE_KEY]) {
