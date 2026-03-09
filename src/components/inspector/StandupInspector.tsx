@@ -8,8 +8,11 @@ import { TaskTimeline } from './TaskTimeline';
 import { Badge } from '../ui/badge';
 import { format } from 'date-fns';
 import {
+    AlertTriangle,
     Calendar,
     ChevronUp,
+    Clock,
+    ExternalLink,
     OctagonAlert,
     Pin,
     Plus,
@@ -216,6 +219,46 @@ export function StandupInspector({
                         </div>
                     )}
 
+                    {/* ── Blocking Transitions (> 8 working hours) ── */}
+                    {taskAnalysis && taskAnalysis.blockingTransitions && taskAnalysis.blockingTransitions.length > 0 && (
+                        <div className="px-3 py-2.5 rounded-lg border border-orange-700/50 bg-orange-950/20">
+                            <div className="flex items-center gap-2 mb-2">
+                                <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
+                                <span className="text-xs font-semibold text-zinc-200 uppercase tracking-wide">
+                                    Long Status Durations
+                                </span>
+                                <Badge className="text-[9px] px-1.5 ml-auto bg-orange-900/60 text-orange-200 border-orange-700/50">
+                                    {taskAnalysis.blockingTransitions.length} blocking
+                                </Badge>
+                            </div>
+                            <p className="text-[10px] text-zinc-500 mb-2">
+                                Status changes that took more than 8 working hours
+                            </p>
+                            <div className="space-y-1.5">
+                                {taskAnalysis.blockingTransitions.map((bt, idx) => (
+                                    <div
+                                        key={idx}
+                                        className="flex items-center gap-2 px-2 py-1.5 bg-black/30 rounded-md border border-orange-900/30 text-[11px]"
+                                    >
+                                        <Clock className="w-3 h-3 text-orange-400 flex-shrink-0" />
+                                        <span className="text-zinc-400 font-mono">{bt.fromStatus}</span>
+                                        <span className="text-zinc-600">→</span>
+                                        <span className="text-zinc-400 font-mono">{bt.toStatus}</span>
+                                        <span className="ml-auto text-orange-300 font-bold font-mono">
+                                            {bt.workingHoursElapsed}h
+                                        </span>
+                                        {bt.person && (
+                                            <span className="text-zinc-500 flex items-center gap-1">
+                                                <User className="w-2.5 h-2.5" />
+                                                <span className="truncate max-w-[80px]">{bt.person}</span>
+                                            </span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* ── Metadata ── */}
                     <div className="grid grid-cols-2 gap-4 auto-rows-min text-sm border border-zinc-900 rounded-lg p-4 bg-zinc-950/50 shadow-inner">
                         <div className="flex flex-col">
@@ -234,6 +277,20 @@ export function StandupInspector({
                             <span className="text-zinc-500 font-medium mb-1">Sprint Goal</span>
                             <span className="font-mono text-zinc-200">{segment.sprintGoal}</span>
                         </div>
+                        {(segment.recordLink || taskAnalysis?.recordLink) && (
+                            <div className="flex flex-col col-span-2">
+                                <span className="text-zinc-500 font-medium mb-1">Record Link</span>
+                                <a
+                                    href={segment.recordLink || taskAnalysis?.recordLink}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-2 font-mono text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+                                >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                    <span className="truncate">Open in Source System</span>
+                                </a>
+                            </div>
+                        )}
                     </div>
 
                     <hr className="border-t border-zinc-900" />

@@ -3,10 +3,12 @@ import {
     TaskAnalysis,
     PersonSummary,
     StatusHistoryEntry,
+    BlockingTransition,
     RiskLevel,
     WORKFLOW_STATUSES,
     MeetingNote,
 } from './types';
+import { calculateWorkingDuration } from './date-utils';
 
 // ── Status Helpers ────────────────────────────────────────────────
 
@@ -71,6 +73,39 @@ function detectDoomLoops(history: StatusHistoryEntry[]): number {
 // ── Single Task Analysis ──────────────────────────────────────────
 
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+const BLOCKING_WORKING_HOURS_THRESHOLD = 8; // 8 working hours
+const BLOCKING_THRESHOLD_MS = BLOCKING_WORKING_HOURS_THRESHOLD * 60 * 60 * 1000; // 8 hours in ms
+
+/**
+ * Detects blocking transitions - status changes that took more than 8 working hours
+ */
+function detectBlockingTransitions(history: StatusHistoryEntry[]): BlockingTransition[] {
+    const blockingTransitions: BlockingTransition[] = [];
+
+    for (let i = 0; i < history.length - 1; i++) {
+        const current = history[i];
+        const next = history[i + 1];
+
+        const startMs = new Date(current.timestamp).getTime();
+        const endMs = new Date(next.timestamp).getTime();
+
+        const { workingMs } = calculateWorkingDuration(startMs, endMs);
+
+        if (workingMs > BLOCKING_THRESHOLD_MS) {
+            const workingHoursElapsed = Math.round((workingMs / (60 * 60 * 1000)) * 10) / 10;
+            blockingTransitions.push({
+                fromStatus: current.status,
+                toStatus: next.status,
+                fromTimestamp: current.timestamp,
+                toTimestamp: next.timestamp,
+                workingHoursElapsed,
+                person: current.person,
+            });
+        }
+    }
+
+    return blockingTransitions;
+}
 
 export function analyzeTask(taskLogs: RawLogEvent[], taskNotes: MeetingNote[] = []): TaskAnalysis {
     // Sort chronologically
@@ -93,11 +128,14 @@ export function analyzeTask(taskLogs: RawLogEvent[], taskNotes: MeetingNote[] = 
     // Detect doom loops
     const doomLoopCount = detectDoomLoops(statusHistory);
 
-    // Risk level
+    // Detect blocking transitions (> 8 working hours between status changes)
+    const blockingTransitions = detectBlockingTransitions(statusHistory);
+
+    // Risk level - now also considers blocking transitions
     let riskLevel: RiskLevel = 'normal';
-    if (reprocessCount > 2 || doomLoopCount >= 2) {
+    if (reprocessCount > 2 || doomLoopCount >= 2 || blockingTransitions.length >= 3) {
         riskLevel = 'critical';
-    } else if (reprocessCount > 0 || doomLoopCount >= 1) {
+    } else if (reprocessCount > 0 || doomLoopCount >= 1 || blockingTransitions.length >= 1) {
         riskLevel = 'elevated';
     }
 
@@ -121,6 +159,7 @@ export function analyzeTask(taskLogs: RawLogEvent[], taskNotes: MeetingNote[] = 
         isStale,
         staleDurationMs: isStale ? timeSinceLastChange : 0,
         statusHistory,
+        blockingTransitions,
         module: latest.module,
         screen: latest.screen,
         sprintGoal: latest.sprintGoal,

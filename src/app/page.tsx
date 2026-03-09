@@ -7,12 +7,16 @@ import { analyzeAllTasks, getPersonSummaries } from '@/lib/workflow-engine';
 import { StandupInspector } from '@/components/inspector/StandupInspector';
 import { PersonnelOverview } from '@/components/dashboard/PersonnelOverview';
 import { TaskOverview } from '@/components/dashboard/TaskOverview';
+import { SprintStartManager } from '@/components/dashboard/SprintStartManager';
+import { DailyMeetingView } from '@/components/dashboard/DailyMeetingView';
+import { DailyRecapView } from '@/components/dashboard/DailyRecapView';
 import { WorkflowLegend } from '@/components/dashboard/WorkflowLegend';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useHighRisk } from '@/lib/hooks/useHighRisk';
 import { useInterrogationLog } from '@/lib/hooks/useInterrogationLog';
 import { useMeetingNotes } from '@/lib/hooks/useMeetingNotes';
+import { useSprintStart } from '@/lib/hooks/useSprintStart';
 import { format } from 'date-fns';
 import { useSprintConfig } from '@/lib/hooks/useSprintConfig';
 import { SprintSettings } from '@/components/inspector/SprintSettings';
@@ -20,6 +24,7 @@ import { DataManagementModal } from '@/components/dashboard/DataManagementModal'
 import {
   Activity,
   Calendar,
+  CheckCircle2,
   Database,
   Users,
   LayoutGrid,
@@ -27,18 +32,21 @@ import {
   AlertTriangle,
   RefreshCw,
   Settings,
+  Flag,
+  UsersRound,
+  History,
 } from 'lucide-react';
 
-type ViewTab = 'personnel' | 'tasks';
+type ViewTab = 'dailyMeeting' | 'dailyRecap' | 'personnel' | 'tasks' | 'sprintStart';
 
 export default function Home() {
-  const { configs, manualOverride, saveManualOverride, getActiveSprintNumber } = useSprintConfig();
+  const { configs, manualOverride, saveManualOverride, getActiveSprintNumber, refetch: refetchSprintConfig } = useSprintConfig();
 
   const [data, setData] = useState<PersonTimeline[]>([]);
   const [rawLogs, setRawLogs] = useState<RawLogEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState<TimelineSegment | null>(null);
-  const [activeTab, setActiveTab] = useState<ViewTab>('personnel');
+  const [activeTab, setActiveTab] = useState<ViewTab>('dailyMeeting');
   const [showSettings, setShowSettings] = useState(false);
 
   const activeSprint = getActiveSprintNumber();
@@ -52,6 +60,14 @@ export default function Home() {
   const { highRiskIds, toggleHighRisk, isHighRisk } = useHighRisk();
   // useInterrogationLog removed
   const { addNote, updateNote, deleteNote, getNotesForTask, notes } = useMeetingNotes();
+  const {
+    getSprintStartSnapshot,
+    saveOverride,
+    bulkSaveOverrides,
+    clearOverride,
+    clearAllOverrides,
+    confirmAllAsOverrides,
+  } = useSprintStart();
 
   useEffect(() => {
     let ignore = false;
@@ -92,6 +108,7 @@ export default function Home() {
     const taskList = Object.values(analyses);
     return {
       total: taskList.length,
+      metGoal: taskList.filter((t) => t.sprintGoal && t.currentStatus === t.sprintGoal).length,
       bottlenecked: taskList.filter((t) => ['Waiting to Integrate', 'Reviewing', 'Reprocess'].includes(t.currentStatus)).length,
       doomLoops: taskList.filter((t) => t.doomLoopCount > 0).length,
       stale: taskList.filter((t) => t.isStale).length,
@@ -122,8 +139,11 @@ export default function Home() {
 
   // ── Tab definitions ────────────────────────────────────────────
   const tabs: { key: ViewTab; label: string; icon: React.ReactNode; desc: string }[] = [
+    { key: 'dailyMeeting', label: 'Daily Meeting', icon: <UsersRound className="w-4 h-4" />, desc: 'Prioritized view for daily standups: Doing → Blocking → Blocked → Not Started' },
+    { key: 'dailyRecap', label: 'Daily Recap', icon: <History className="w-4 h-4" />, desc: 'Retrospective view: task movements per person for a selected day (default: yesterday)' },
     { key: 'personnel', label: 'Personnel', icon: <LayoutGrid className="w-4 h-4" />, desc: 'Standup-ready view grouped by person' },
     { key: 'tasks', label: 'Tasks', icon: <ListChecks className="w-4 h-4" />, desc: 'Sortable task table with risk analysis' },
+    { key: 'sprintStart', label: 'Sprint Start', icon: <Flag className="w-4 h-4" />, desc: 'Auto-detected starting status snapshot with override support' },
   ];
 
   return (
@@ -180,10 +200,18 @@ export default function Home() {
       </header>
 
       {/* ── Stats Bar ──────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
         <div className="px-4 py-3 bg-zinc-950 border border-zinc-800 rounded-xl flex flex-col">
           <span className="text-zinc-500 text-[10px] uppercase tracking-wider font-semibold">Total Tasks</span>
           <span className="text-2xl font-bold font-mono text-zinc-100 mt-1">{stats.total}</span>
+        </div>
+        <div className={`px-4 py-3 rounded-xl flex flex-col border ${stats.metGoal > 0 ? 'bg-emerald-950/20 border-emerald-800/50' : 'bg-zinc-950 border-zinc-800'}`}>
+          <span className="text-zinc-500 text-[10px] uppercase tracking-wider font-semibold flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Met Goal
+          </span>
+          <span className={`text-2xl font-bold font-mono mt-1 ${stats.metGoal > 0 ? 'text-emerald-300' : 'text-zinc-100'}`}>
+            {stats.metGoal}
+          </span>
         </div>
         <div className={`px-4 py-3 rounded-xl flex flex-col border ${stats.bottlenecked > 0 ? 'bg-amber-950/20 border-amber-800/50' : 'bg-zinc-950 border-zinc-800'}`}>
           <span className="text-zinc-500 text-[10px] uppercase tracking-wider font-semibold flex items-center gap-1">
@@ -252,6 +280,30 @@ export default function Home() {
                 </div>
               ) : (
                 <>
+                  {activeTab === 'dailyMeeting' && (() => {
+                    const snapshot = getSprintStartSnapshot(activeSprint || '', rawLogs);
+                    const snapshotMap: Record<string, string> = {};
+                    snapshot.forEach(entry => {
+                      snapshotMap[entry.taskId] = entry.confirmedStatus;
+                    });
+                    return (
+                      <DailyMeetingView
+                        analyses={analyses}
+                        meetingNotes={notes}
+                        rawLogs={rawLogs}
+                        sprintStartSnapshot={snapshotMap}
+                        highRiskIds={highRiskIds}
+                        onTaskClick={handleTaskClick}
+                      />
+                    );
+                  })()}
+                  {activeTab === 'dailyRecap' && (
+                    <DailyRecapView
+                      rawLogs={rawLogs}
+                      sprintStartDate={configs.find(c => c.number === activeSprint)?.startDate}
+                      onTaskClick={handleTaskClick}
+                    />
+                  )}
                   {activeTab === 'personnel' && (
                     <PersonnelOverview
                       summaries={personSummaries}
@@ -264,6 +316,18 @@ export default function Home() {
                       analyses={analyses}
                       highRiskIds={highRiskIds}
                       onTaskClick={handleTaskClick}
+                    />
+                  )}
+                  {activeTab === 'sprintStart' && (
+                    <SprintStartManager
+                      rawLogs={rawLogs}
+                      selectedSprint={activeSprint || ''}
+                      getSprintStartSnapshot={getSprintStartSnapshot}
+                      onSaveOverride={saveOverride}
+                      onBulkSaveOverrides={bulkSaveOverrides}
+                      onClearOverride={clearOverride}
+                      onClearAllOverrides={clearAllOverrides}
+                      onConfirmAll={confirmAllAsOverrides}
                     />
                   )}
                 </>
@@ -308,6 +372,7 @@ export default function Home() {
       <SprintSettings
         open={showSettings}
         onClose={() => setShowSettings(false)}
+        onSave={refetchSprintConfig}
       />
     </div>
   );

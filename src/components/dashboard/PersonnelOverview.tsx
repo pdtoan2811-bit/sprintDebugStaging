@@ -6,6 +6,7 @@ import { isBottleneckStatus, getStatusSeverity } from '@/lib/workflow-engine';
 import { Badge } from '../ui/badge';
 import {
     AlertTriangle,
+    ChevronRight,
     Clock,
     RefreshCw,
     Shield,
@@ -172,15 +173,15 @@ export function PersonnelOverview({ summaries, highRiskIds, onTaskClick }: Perso
                                     <button
                                         key={task.taskId}
                                         onClick={() => onTaskClick(task.taskId)}
-                                        className={`w-full text-left rounded-lg border px-3 py-2 transition-all hover:bg-zinc-800/50 cursor-pointer group ${isHR
-                                            ? 'border-red-600/50 bg-red-950/30'
+                                        className={`w-full text-left rounded-lg border px-3 py-2 transition-all cursor-pointer group ${isHR
+                                            ? 'border-red-600/50 bg-red-950/30 hover:border-red-500/70 hover:bg-red-950/40'
                                             : task.isStale
-                                                ? 'border-amber-700/30 bg-amber-950/10'
-                                                : 'border-zinc-800/50 bg-zinc-900/30'
+                                                ? 'border-amber-700/30 bg-amber-950/10 hover:border-amber-600/50 hover:bg-amber-950/20'
+                                                : 'border-zinc-800/50 bg-zinc-900/30 hover:border-zinc-700/70 hover:bg-zinc-800/50'
                                             }`}
                                     >
                                         <div className="flex items-center justify-between gap-2">
-                                            <div className="flex items-center gap-2 min-w-0">
+                                            <div className="flex items-center gap-2 min-w-0 flex-1">
                                                 {/* Priority dot */}
                                                 <div className={`w-2 h-2 rounded-full flex-shrink-0 ${priorityDotColor(task.currentStatus)}`} />
                                                 {isHR && (
@@ -193,7 +194,10 @@ export function PersonnelOverview({ summaries, highRiskIds, onTaskClick }: Perso
                                                     {task.taskName}
                                                 </span>
                                             </div>
-                                            {riskBadge(task)}
+                                            <div className="flex items-center gap-1 flex-shrink-0">
+                                                {riskBadge(task)}
+                                                <ChevronRight className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                                             {statusBadge(task.currentStatus)}

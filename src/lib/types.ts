@@ -65,6 +65,15 @@ export interface StatusHistoryEntry {
     person: string;
 }
 
+export interface BlockingTransition {
+    fromStatus: string;
+    toStatus: string;
+    fromTimestamp: string;
+    toTimestamp: string;
+    workingHoursElapsed: number;
+    person: string;
+}
+
 export interface TaskAnalysis {
     taskId: string;
     taskName: string;
@@ -76,6 +85,7 @@ export interface TaskAnalysis {
     isStale: boolean;
     staleDurationMs: number;
     statusHistory: StatusHistoryEntry[];
+    blockingTransitions: BlockingTransition[];
     module: string;
     screen: string;
     sprintGoal: string;
@@ -108,4 +118,55 @@ export interface PersonSummary {
     staleTasks: TaskAnalysis[];
     suggestion: string | null;
     totalTasks: number;
+}
+
+// ── Daily Movement Analysis ──────────────────────────────────────────
+
+export type MovementType = 'forward' | 'backward' | 'same' | 'new' | 'no-change';
+
+export interface StatusTransition {
+    status: string;
+    timestamp: string;
+}
+
+export interface TaskMovement {
+    taskId: string;
+    taskName: string;
+    person: string;
+    module: string;
+    screen: string;
+    sprintGoal: string;
+    recordLink: string;
+    startStatus: string | null;
+    endStatus: string;
+    movementType: MovementType;
+    eventCount: number;
+    lastEventTime: string | null;
+    eventsOnDay: RawLogEvent[];
+    statusChain: StatusTransition[];
+    isNewTask: boolean;
+}
+
+export interface PersonDailyMovement {
+    person: string;
+    movedForward: TaskMovement[];
+    movedBackward: TaskMovement[];
+    sameWithEvents: TaskMovement[];
+    noChange: TaskMovement[];
+    totalTasks: number;
+    forwardCount: number;
+    backwardCount: number;
+    totalEventsOnDay: number;
+    urgencyScore: number;
+}
+
+export interface DailyMovementSummary {
+    date: string;
+    totalTasksWithMovement: number;
+    totalForward: number;
+    totalBackward: number;
+    totalSameWithEvents: number;
+    totalNoChange: number;
+    topMover: string | null;
+    personMovements: PersonDailyMovement[];
 }

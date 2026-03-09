@@ -9,9 +9,10 @@ import { DatePicker } from '../ui/date-picker';
 interface SprintSettingsProps {
     open: boolean;
     onClose: () => void;
+    onSave?: () => void;
 }
 
-export function SprintSettings({ open, onClose }: SprintSettingsProps) {
+export function SprintSettings({ open, onClose, onSave }: SprintSettingsProps) {
     const { configs, saveConfigs, manualOverride, saveManualOverride, isLoaded } = useSprintConfig();
     const [localConfigs, setLocalConfigs] = useState<SprintConfig[]>([]);
     const [localOverride, setLocalOverride] = useState<string | null>(null);
@@ -43,10 +44,11 @@ export function SprintSettings({ open, onClose }: SprintSettingsProps) {
         setLocalConfigs(newConfigs);
     };
 
-    const handleSave = () => {
-        saveConfigs(localConfigs);
-        saveManualOverride(localOverride);
+    const handleSave = async () => {
+        await saveConfigs(localConfigs);
+        await saveManualOverride(localOverride);
         onClose();
+        onSave?.();
     };
 
     if (!open) return null;

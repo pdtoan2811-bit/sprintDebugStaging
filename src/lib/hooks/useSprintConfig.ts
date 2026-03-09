@@ -25,7 +25,7 @@ export function useSprintConfig() {
     const [manualOverride, setManualOverride] = useState<string | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
 
-    useEffect(() => {
+    const fetchData = useCallback(() => {
         fetch('/api/data')
             .then(res => res.json())
             .then(data => {
@@ -34,12 +34,13 @@ export function useSprintConfig() {
                         if (data[STORAGE_KEY]) {
                             setConfigs(JSON.parse(data[STORAGE_KEY] || '[]'));
                         } else {
-                            // First time load fallback
                             setConfigs(DEFAULT_CONFIG);
                         }
 
                         if (data[OVERRIDE_KEY]) {
                             setManualOverride(data[OVERRIDE_KEY]);
+                        } else {
+                            setManualOverride(null);
                         }
                     } catch (e) {
                         setConfigs(DEFAULT_CONFIG);
@@ -55,22 +56,34 @@ export function useSprintConfig() {
             });
     }, []);
 
-    const saveConfigs = useCallback((newConfigs: SprintConfig[]) => {
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
+
+    const saveConfigs = useCallback(async (newConfigs: SprintConfig[]) => {
         setConfigs(newConfigs);
-        fetch('/api/data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(newConfigs) })
-        }).catch(err => console.error('Failed to save sprint config', err));
+        try {
+            await fetch('/api/data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(newConfigs) })
+            });
+        } catch (err) {
+            console.error('Failed to save sprint config', err);
+        }
     }, []);
 
-    const saveManualOverride = useCallback((sprintNumber: string | null) => {
+    const saveManualOverride = useCallback(async (sprintNumber: string | null) => {
         setManualOverride(sprintNumber);
-        fetch('/api/data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ [OVERRIDE_KEY]: sprintNumber })
-        }).catch(err => console.error('Failed to save manual override', err));
+        try {
+            await fetch('/api/data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [OVERRIDE_KEY]: sprintNumber })
+            });
+        } catch (err) {
+            console.error('Failed to save manual override', err);
+        }
     }, []);
 
     const getCurrentSprint = useCallback((): SprintConfig | undefined => {
@@ -91,5 +104,9 @@ export function useSprintConfig() {
         return manualOverride;
     }, [manualOverride, getCurrentSprint]);
 
-    return { configs, saveConfigs, manualOverride, saveManualOverride, getCurrentSprint, getActiveSprintNumber, isLoaded };
+    const refetch = useCallback(() => {
+        fetchData();
+    }, [fetchData]);
+
+    return { configs, saveConfigs, manualOverride, saveManualOverride, getCurrentSprint, getActiveSprintNumber, isLoaded, refetch };
 }
