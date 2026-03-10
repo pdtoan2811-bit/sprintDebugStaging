@@ -13,7 +13,7 @@ interface SprintSettingsProps {
 }
 
 export function SprintSettings({ open, onClose, onSave }: SprintSettingsProps) {
-    const { configs, saveConfigs, manualOverride, saveManualOverride, isLoaded } = useSprintConfig();
+    const { configs, manualOverride, saveSprintSettings, isLoaded } = useSprintConfig();
     const [localConfigs, setLocalConfigs] = useState<SprintConfig[]>([]);
     const [localOverride, setLocalOverride] = useState<string | null>(null);
 
@@ -45,8 +45,7 @@ export function SprintSettings({ open, onClose, onSave }: SprintSettingsProps) {
     };
 
     const handleSave = async () => {
-        await saveConfigs(localConfigs);
-        await saveManualOverride(localOverride);
+        await saveSprintSettings(localConfigs, localOverride);
         onClose();
         onSave?.();
     };

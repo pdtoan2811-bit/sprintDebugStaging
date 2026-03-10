@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 export interface DailyTodoItem {
     taskId: string;
@@ -16,14 +16,29 @@ export interface DailyTodoEntry {
 }
 
 const STORAGE_KEY = 'sprint_relay_daily_todos';
+const SAVE_DEBOUNCE_MS = 500;
 
 async function loadFromAPI(): Promise<Record<string, DailyTodoEntry>> {
     try {
-        const res = await fetch('/api/db?key=' + STORAGE_KEY);
-        if (!res.ok) return {};
+        // Use /api/data (same as DataProvider) so we read the same db.json
+        const res = await fetch('/api/data');
+        if (!res.ok) {
+            console.warn('Failed to load daily todos, status:', res.status);
+            return {};
+        }
         const data = await res.json();
-        if (data.value) {
-            return JSON.parse(data.value);
+        const raw = data?.[STORAGE_KEY];
+        if (raw == null || raw === '') return {};
+        if (typeof raw === 'object' && raw !== null) return raw as Record<string, DailyTodoEntry>;
+        try {
+            return JSON.parse(raw as string) as Record<string, DailyTodoEntry>;
+        } catch {
+            // Fallback: maybe double-encoded
+            try {
+                return JSON.parse(JSON.parse(raw as string)) as Record<string, DailyTodoEntry>;
+            } catch {
+                return {};
+            }
         }
     } catch (err) {
         console.error('Failed to load daily todos from API', err);
@@ -31,15 +46,21 @@ async function loadFromAPI(): Promise<Record<string, DailyTodoEntry>> {
     return {};
 }
 
-async function saveToAPI(data: Record<string, DailyTodoEntry>): Promise<void> {
+async function saveToAPI(data: Record<string, DailyTodoEntry>): Promise<boolean> {
     try {
-        await fetch('/api/db', {
+        const res = await fetch('/api/data', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ key: STORAGE_KEY, value: JSON.stringify(data) }),
+            body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(data) }),
         });
+        if (!res.ok) {
+            console.error('Failed to save daily todos, status:', res.status);
+            return false;
+        }
+        return true;
     } catch (err) {
         console.error('Failed to save daily todos to API', err);
+        return false;
     }
 }
 
@@ -50,6 +71,9 @@ function getEntryKey(date: string, person: string): string {
 export function useDailyTodos() {
     const [entries, setEntries] = useState<Record<string, DailyTodoEntry>>({});
     const [loaded, setLoaded] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const pendingEntriesRef = useRef<Record<string, DailyTodoEntry> | null>(null);
 
     useEffect(() => {
         loadFromAPI().then((data) => {
@@ -59,9 +83,27 @@ export function useDailyTodos() {
     }, []);
 
     useEffect(() => {
-        if (loaded) {
-            saveToAPI(entries);
+        if (!loaded) return;
+
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
         }
+
+        pendingEntriesRef.current = entries;
+
+        saveTimeoutRef.current = setTimeout(async () => {
+            if (pendingEntriesRef.current) {
+                setSaving(true);
+                await saveToAPI(pendingEntriesRef.current);
+                setSaving(false);
+            }
+        }, SAVE_DEBOUNCE_MS);
+
+        return () => {
+            if (saveTimeoutRef.current) {
+                clearTimeout(saveTimeoutRef.current);
+            }
+        };
     }, [entries, loaded]);
 
     const getTodosForPersonDate = useCallback(
@@ -217,5 +259,7 @@ export function useDailyTodos() {
         getHistoricalTodos,
         getAllPersonsWithTodos,
         loaded,
+        saving,
+        entries,
     };
 }

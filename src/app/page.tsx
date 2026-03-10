@@ -21,6 +21,7 @@ import { format } from 'date-fns';
 import { useSprintConfig } from '@/lib/hooks/useSprintConfig';
 import { SprintSettings } from '@/components/inspector/SprintSettings';
 import { DataManagementModal } from '@/components/dashboard/DataManagementModal';
+import { usePersonWebhooks } from '@/lib/hooks/usePersonWebhooks';
 import {
   Activity,
   Calendar,
@@ -48,6 +49,9 @@ export default function Home() {
   const [selectedSegment, setSelectedSegment] = useState<TimelineSegment | null>(null);
   const [activeTab, setActiveTab] = useState<ViewTab>('dailyMeeting');
   const [showSettings, setShowSettings] = useState(false);
+  const [showWebhookSettings, setShowWebhookSettings] = useState(false);
+
+  const { map: webhookMap, setWebhookForPerson } = usePersonWebhooks();
 
   const activeSprint = getActiveSprintNumber();
 
@@ -70,13 +74,14 @@ export default function Home() {
   } = useSprintStart();
 
   useEffect(() => {
+    import('@/lib/migration').then(m => m.migrateLocalStorageToAPI());
+  }, []);
+
+  useEffect(() => {
     let ignore = false;
     async function loadData() {
       setLoading(true);
       try {
-        const migrationModule = await import('@/lib/migration');
-        await migrationModule.migrateLocalStorageToAPI();
-
         const logs = await fetchLogs(activeSprint || undefined);
         if (!ignore) {
           setRawLogs(logs);
@@ -102,6 +107,10 @@ export default function Home() {
   // ── Workflow Analysis ──────────────────────────────────────────
   const analyses = useMemo(() => analyzeAllTasks(rawLogs, notes), [rawLogs, notes]);
   const personSummaries = useMemo(() => getPersonSummaries(rawLogs, analyses), [rawLogs, analyses]);
+  const allPersons = useMemo(
+    () => Array.from(new Set(data.map((d) => d.person))).sort(),
+    [data]
+  );
 
   // ── Stats ──────────────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -184,10 +193,15 @@ export default function Home() {
             <Database className="w-3 h-3 text-emerald-400" />
             <span className="font-mono">Live Logs</span>
           </Badge>
-          <Badge variant="outline" className="px-3 py-1.5 flex items-center gap-1.5 bg-zinc-950">
+          <button
+            type="button"
+            onClick={() => setShowWebhookSettings(true)}
+            className="px-3 py-1.5 flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded-md text-zinc-200 hover:bg-zinc-900 transition-colors"
+            title="Configure per-person webhook URLs"
+          >
             <Users className="w-3 h-3 text-purple-400" />
             <span className="font-mono">{data.length} Members</span>
-          </Badge>
+          </button>
           <DataManagementModal />
           <button
             onClick={() => setShowSettings(true)}
@@ -349,6 +363,58 @@ export default function Home() {
           </div>
         </div>
       </main>
+
+      {/* Webhook Settings Overlay */}
+      {showWebhookSettings && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70">
+          <div className="w-full max-w-xl rounded-xl bg-zinc-950 border border-zinc-800 p-5 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-purple-400" />
+                <span className="font-semibold text-sm text-zinc-100">Webhook Settings per Member</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWebhookSettings(false)}
+                className="text-zinc-500 hover:text-zinc-200 text-xs px-2 py-1 rounded-md hover:bg-zinc-800 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+            {allPersons.length === 0 ? (
+              <p className="text-xs text-zinc-500">
+                No members detected yet. Webhooks will appear once sprint data is loaded.
+              </p>
+            ) : (
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                {allPersons.map((person) => {
+                  const current = webhookMap[person] ?? '';
+                  return (
+                    <div key={person} className="flex flex-col gap-1 border border-zinc-800/60 rounded-lg p-3 bg-zinc-900/50">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-zinc-100">{person}</span>
+                        <span className="text-[10px] text-zinc-500">
+                          {current ? 'Webhook configured' : 'No webhook set'}
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        defaultValue={current}
+                        onBlur={(e) => {
+                          const value = e.target.value.trim();
+                          setWebhookForPerson(person, value || null);
+                        }}
+                        placeholder="https://... (Lark webhook URL for this person)"
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-md px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <footer className="w-full text-center text-zinc-600 text-xs font-mono py-4 border-t border-zinc-900 mt-auto">
         Sprint Relay Engine v2.0.0 &middot; Workflow Anatomy Enabled

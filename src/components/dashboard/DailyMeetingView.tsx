@@ -18,16 +18,19 @@ import {
     ChevronRight,
     Circle,
     Clock,
+    Copy,
     GitCompare,
     GripVertical,
     Hand,
     History,
     Layers,
     Lightbulb,
+    Loader2,
     PlayCircle,
     Plus,
     RefreshCw,
     Repeat,
+    Send,
     Sparkles,
     Target,
     TrendingUp,
@@ -52,7 +55,18 @@ interface TaskCategory {
     blockingOthers: TaskAnalysis[];
     blockedByOthers: TaskAnalysis[];
     notStartedInSprint: TaskAnalysis[];
+    other: TaskAnalysis[];
 }
+
+export type CategoryFilterKey = 'doing' | 'blockedByOthers' | 'blockingOthers' | 'notStarted' | 'other';
+
+const DEFAULT_CATEGORY_FILTER: Record<CategoryFilterKey, boolean> = {
+    doing: true,
+    blockedByOthers: true,
+    blockingOthers: true,
+    notStarted: true,
+    other: true,
+};
 
 interface PersonMeetingData {
     person: string;
@@ -119,10 +133,13 @@ function computePersonMeetingData(
         blockingOthers: [],
         blockedByOthers: [],
         notStartedInSprint: [],
+        other: [],
     });
 
     Object.values(analyses).forEach((task) => {
-        if (task.currentStatus === 'Completed' || task.currentStatus === 'Staging Passed') {
+        // Exclude only fully completed tasks from the daily meeting view.
+        // Tasks in "Staging Passed" should still appear so they can be discussed.
+        if (task.currentStatus === 'Completed') {
             return;
         }
 
@@ -153,6 +170,8 @@ function computePersonMeetingData(
                 personMap[person].blockedByOthers.push(task);
             } else if (!hasActivity) {
                 personMap[person].notStartedInSprint.push(task);
+            } else {
+                personMap[person].other.push(task);
             }
         });
     });
@@ -176,13 +195,15 @@ function computePersonMeetingData(
                 categories.doing.length +
                 categories.blockingOthers.length +
                 categories.blockedByOthers.length +
-                categories.notStartedInSprint.length;
+                categories.notStartedInSprint.length +
+                categories.other.length;
 
             const urgencyScore =
                 categories.doing.length * 4 +
                 categories.blockingOthers.length * 10 +
                 categories.blockedByOthers.length * 3 +
-                categories.notStartedInSprint.length * 1;
+                categories.notStartedInSprint.length * 1 +
+                categories.other.length * 2;
 
             return {
                 person,
@@ -194,6 +215,16 @@ function computePersonMeetingData(
         })
         .filter((p) => p.totalTasks > 0)
         .sort((a, b) => b.urgencyScore - a.urgencyScore);
+}
+
+function getVisibleTaskCount(person: PersonMeetingData, filter: Record<CategoryFilterKey, boolean>): number {
+    let n = 0;
+    if (filter.doing) n += person.categories.doing.length;
+    if (filter.blockedByOthers) n += person.categories.blockedByOthers.length;
+    if (filter.blockingOthers) n += person.categories.blockingOthers.length;
+    if (filter.notStarted) n += person.categories.notStartedInSprint.length;
+    if (filter.other) n += person.categories.other.length;
+    return n;
 }
 
 function priorityDotColor(status: string): string {
@@ -228,6 +259,196 @@ function formatStaleHours(ms: number): string {
     return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
 }
 
+/** Build DM-friendly text for a person's to-do list */
+function formatTodoListForDM(
+    person: string,
+    todos: DailyTodoItem[],
+    analyses: Record<string, TaskAnalysis>,
+    meetingNotes: Record<string, MeetingNote[]>,
+    allPersonData: PersonMeetingData[]
+): string {
+    const lines: string[] = [`📋 ${person} – To-do list`, ''];
+
+    // Find people this person is blocking (tasks where blockedBy === person)
+    const blockingOthers = new Set<string>();
+    allPersonData.forEach((pd) => {
+        pd.allTasks.forEach((task) => {
+            const notes = meetingNotes[task.taskId] || [];
+            const latestNote = getLatestMeetingNote(notes);
+            if (latestNote?.isStall && latestNote.blockedBy === person && task.currentPerson !== person) {
+                blockingOthers.add(task.currentPerson);
+            }
+        });
+    });
+
+    if (blockingOthers.size > 0) {
+        lines.push(`⚠️ Blocking: ${[...blockingOthers].join(', ')}`);
+        lines.push('');
+    }
+
+    const sortedTodos = [...todos].sort((a, b) => a.order - b.order);
+    sortedTodos.forEach((todoItem, i) => {
+        const task = analyses[todoItem.taskId];
+        if (!task) return;
+
+        const notes = meetingNotes[task.taskId] || [];
+        const latestNote = getLatestMeetingNote(notes);
+        const blockedBy = latestNote?.isStall && latestNote.blockedBy ? latestNote.blockedBy : null;
+
+        lines.push(`${i + 1}. ${task.taskName}`);
+        if (task.recordLink) {
+            lines.push(`   Link: ${task.recordLink}`);
+        }
+        lines.push(`   Status: ${task.currentStatus}`);
+        if (blockedBy) {
+            lines.push(`   Blocked by: ${blockedBy}`);
+        }
+        if (task.isStale && task.staleDurationMs > 0) {
+            lines.push(`   ⏱ Stale: ${formatStaleHours(task.staleDurationMs)}`);
+        }
+        lines.push('');
+    });
+
+    return lines.join('\n').trimEnd();
+}
+
+interface TodoWebhookItem {
+    order: number;
+    taskId: string;
+    taskName: string;
+    status: string;
+    sprintGoal: string;
+    recordLink: string;
+    /** Who is blocking THIS task (if any) */
+    blockedBy: string | null;
+    /** Which people are being blocked BY this person (attached at item level for Lark) */
+    blockingTargets: string[];
+}
+
+interface TodoWebhookPayload {
+    person: string;
+    date: string;
+    todos: (TodoWebhookItem | null)[];
+    summary: {
+        total: number;
+        completed: number;
+        blocked: number;
+    };
+}
+
+/** Build JSON payload for webhook */
+function formatTodoListForWebhook(
+    person: string,
+    date: string,
+    todos: DailyTodoItem[],
+    analyses: Record<string, TaskAnalysis>,
+    meetingNotes: Record<string, MeetingNote[]>,
+    allPersonData: PersonMeetingData[]
+): TodoWebhookPayload {
+    const blockingOthers = new Set<string>();
+    allPersonData.forEach((pd) => {
+        pd.allTasks.forEach((task) => {
+            const notes = meetingNotes[task.taskId] || [];
+            const latestNote = getLatestMeetingNote(notes);
+            if (latestNote?.isStall && latestNote.blockedBy === person && task.currentPerson !== person) {
+                blockingOthers.add(task.currentPerson);
+            }
+        });
+    });
+
+    const sortedTodos = [...todos].sort((a, b) => a.order - b.order);
+    let blockedCount = 0;
+
+    const todoItems = sortedTodos.map((todoItem, i) => {
+        const task = analyses[todoItem.taskId];
+        if (!task) {
+            return null;
+        }
+
+        const notes = meetingNotes[task.taskId] || [];
+        const latestNote = getLatestMeetingNote(notes);
+        const blockedBy = latestNote?.isStall && latestNote.blockedBy ? latestNote.blockedBy : null;
+        
+        if (blockedBy) blockedCount++;
+
+        // Attach the list of people this person is blocking at the item level so Lark can reach it easily.
+        const blockingTargets = [...blockingOthers];
+
+        const item: TodoWebhookItem = {
+            order: i + 1,
+            taskId: task.taskId,
+            taskName: task.taskName,
+            status: task.currentStatus,
+            sprintGoal: task.sprintGoal,
+            recordLink: task.recordLink || '',
+            blockedBy,
+            blockingTargets,
+        };
+
+        return item;
+    }).filter((item): item is NonNullable<typeof item> => item !== null);
+
+    const blockingArray = [...blockingOthers];
+    const summary = {
+        total: todoItems.length,
+        completed: todoItems.filter(t => t.completed).length,
+        blocked: blockedCount,
+    };
+
+    const MAX_SLOTS = 10;
+    const paddedTodos: TodoWebhookPayload['todos'] = Array.from({ length: MAX_SLOTS }, (_, idx) => {
+        return todoItems[idx] ?? null;
+    });
+
+    return {
+        person,
+        date,
+        todos: paddedTodos,
+        summary,
+    };
+}
+
+/** Send todo list to backend API which forwards to Lark webhook */
+async function sendTodoListToWebhook(
+    payload: TodoWebhookPayload
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const response = await fetch('/api/send-todo-webhook', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const data = await response.json();
+                if (data && typeof data.error === 'string') {
+                    errorMessage = data.error;
+                }
+            } catch {
+                // ignore JSON parse errors
+            }
+            return { success: false, error: errorMessage };
+        }
+
+        try {
+            const data = await response.json();
+            if (data && data.success === false && typeof data.error === 'string') {
+                return { success: false, error: data.error };
+            }
+        } catch {
+            // ignore if no JSON body
+        }
+
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+}
+
 interface DraggableTaskCardProps {
     task: TaskAnalysis;
     isHighRisk: boolean;
@@ -242,6 +463,7 @@ interface DraggableTaskCardProps {
     onQuickAdd?: () => void;
     showQuickAdd?: boolean;
     categoryLabel?: { text: string; color: string; icon: React.ReactNode };
+    blockedByLabel?: string;
 }
 
 function DraggableTaskCard({
@@ -258,6 +480,7 @@ function DraggableTaskCard({
     onQuickAdd,
     showQuickAdd = false,
     categoryLabel,
+    blockedByLabel,
 }: DraggableTaskCardProps) {
     const [isDragging, setIsDragging] = useState(false);
     const [mouseDownPos, setMouseDownPos] = useState<{ x: number; y: number } | null>(null);
@@ -399,6 +622,11 @@ function DraggableTaskCard({
                         STALE {formatStaleHours(task.staleDurationMs)}
                     </span>
                 )}
+                {blockedByLabel && (
+                    <span className="text-[9px] font-mono flex items-center gap-1 bg-red-950/40 text-red-300 px-1.5 py-0.5 rounded border border-red-900/50">
+                        <span className="opacity-70">Blocked by</span> {blockedByLabel}
+                    </span>
+                )}
             </div>
             {showSprintGoal && task.sprintGoal && (
                 <div className="mt-2 pt-2 border-t border-zinc-800/50">
@@ -419,8 +647,18 @@ function DraggableTaskCard({
     );
 }
 
+function taskInVisibleCategory(taskId: string, personData: PersonMeetingData, filter: Record<CategoryFilterKey, boolean>): boolean {
+    if (filter.doing && personData.categories.doing.some((t) => t.taskId === taskId)) return true;
+    if (filter.blockingOthers && personData.categories.blockingOthers.some((t) => t.taskId === taskId)) return true;
+    if (filter.blockedByOthers && personData.categories.blockedByOthers.some((t) => t.taskId === taskId)) return true;
+    if (filter.notStarted && personData.categories.notStartedInSprint.some((t) => t.taskId === taskId)) return true;
+    if (filter.other && personData.categories.other.some((t) => t.taskId === taskId)) return true;
+    return false;
+}
+
 interface PersonSingleViewProps {
     personData: PersonMeetingData;
+    categoryFilter: Record<CategoryFilterKey, boolean>;
     analyses: Record<string, TaskAnalysis>;
     highRiskIds: Set<string>;
     onTaskClick: (taskId: string) => void;
@@ -428,10 +666,13 @@ interface PersonSingleViewProps {
     dailyTodos: ReturnType<typeof useDailyTodos>;
     rawLogs: RawLogEvent[];
     sprintStartSnapshot: Record<string, string>;
+    allPersonData: PersonMeetingData[];
+    meetingNotes: Record<string, MeetingNote[]>;
 }
 
 function PersonSingleView({
     personData,
+    categoryFilter,
     analyses,
     highRiskIds,
     onTaskClick,
@@ -439,28 +680,72 @@ function PersonSingleView({
     dailyTodos,
     rawLogs,
     sprintStartSnapshot,
+    allPersonData,
+    meetingNotes,
 }: PersonSingleViewProps) {
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
     const todosForDate = dailyTodos.getTodosForPersonDate(personData.person, dateStr);
     const todoTaskIds = new Set(todosForDate.map((t) => t.taskId));
     
     const [dragOverTodo, setDragOverTodo] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const [sending, setSending] = useState(false);
+    const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
+
+    const handleCopyForDM = useCallback(() => {
+        const text = formatTodoListForDM(personData.person, todosForDate, analyses, meetingNotes, allPersonData);
+        navigator.clipboard.writeText(text).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        });
+    }, [personData.person, todosForDate, analyses, meetingNotes, allPersonData]);
+
+    const handleSendToWebhook = useCallback(async () => {
+        if (sending) return;
+
+        setSending(true);
+        setSendResult(null);
+        
+        const payload = formatTodoListForWebhook(
+            personData.person,
+            dateStr,
+            todosForDate,
+            analyses,
+            meetingNotes,
+            allPersonData
+        );
+        
+        const result = await sendTodoListToWebhook(payload);
+        
+        setSending(false);
+        setSendResult({
+            success: result.success,
+            message: result.success ? 'Sent!' : result.error || 'Failed to send',
+        });
+        
+        setTimeout(() => setSendResult(null), 3000);
+    }, [sending, personData.person, dateStr, todosForDate, analyses, meetingNotes, allPersonData]);
 
     const blockingTaskIds = new Set(personData.categories.blockingOthers.map((t) => t.taskId));
     const notStartedTaskIds = new Set(personData.categories.notStartedInSprint.map((t) => t.taskId));
+    const otherTaskIds = new Set(personData.categories.other.map((t) => t.taskId));
 
     const backlogTasks = useMemo(() => {
-        const tasks = personData.allTasks.filter((t) => !todoTaskIds.has(t.taskId));
+        const tasks = personData.allTasks.filter(
+            (t) => !todoTaskIds.has(t.taskId) && taskInVisibleCategory(t.taskId, personData, categoryFilter)
+        );
         return tasks.sort((a, b) => {
             const aIsBlocking = blockingTaskIds.has(a.taskId) ? 1 : 0;
             const bIsBlocking = blockingTaskIds.has(b.taskId) ? 1 : 0;
             const aNoActivity = notStartedTaskIds.has(a.taskId) ? 1 : 0;
             const bNoActivity = notStartedTaskIds.has(b.taskId) ? 1 : 0;
-            const aScore = aIsBlocking * 10 + aNoActivity * 5;
-            const bScore = bIsBlocking * 10 + bNoActivity * 5;
+            const aIsOther = otherTaskIds.has(a.taskId) ? 1 : 0;
+            const bIsOther = otherTaskIds.has(b.taskId) ? 1 : 0;
+            const aScore = aIsBlocking * 10 + aNoActivity * 5 + aIsOther * 3;
+            const bScore = bIsBlocking * 10 + bNoActivity * 5 + bIsOther * 3;
             return bScore - aScore;
         });
-    }, [personData.allTasks, todoTaskIds, blockingTaskIds, notStartedTaskIds]);
+    }, [personData, todoTaskIds, blockingTaskIds, notStartedTaskIds, otherTaskIds, categoryFilter]);
 
     const handleDragStart = (e: DragEvent, taskId: string) => {
         e.dataTransfer.setData('text/plain', taskId);
@@ -526,16 +811,27 @@ function PersonSingleView({
                     {backlogTasks.map((task) => {
                         const isBlocking = blockingTaskIds.has(task.taskId);
                         const noActivityInSprint = notStartedTaskIds.has(task.taskId);
+                        const isOther = otherTaskIds.has(task.taskId);
                         const isDoing = personData.categories.doing.some((t) => t.taskId === task.taskId);
                         const isBlocked = personData.categories.blockedByOthers.some((t) => t.taskId === task.taskId);
                         
                         const getCategoryLabel = () => {
                             if (isBlocking) return { text: 'Blocking others', color: 'bg-amber-950/50 text-amber-300', icon: <Hand className="w-2.5 h-2.5" /> };
-                            if (noActivityInSprint) return { text: 'No activity in sprint', color: 'bg-orange-950/50 text-orange-300', icon: <AlertTriangle className="w-2.5 h-2.5" /> };
                             if (isBlocked) return { text: 'Blocked', color: 'bg-red-950/50 text-red-300', icon: <UserX className="w-2.5 h-2.5" /> };
                             if (isDoing) return { text: 'In progress', color: 'bg-blue-950/50 text-blue-300', icon: <PlayCircle className="w-2.5 h-2.5" /> };
+                            if (noActivityInSprint) return { text: 'No activity in sprint', color: 'bg-orange-950/50 text-orange-300', icon: <AlertTriangle className="w-2.5 h-2.5" /> };
+                            if (isOther) return { text: 'Pending', color: 'bg-zinc-800/50 text-zinc-300', icon: <Clock className="w-2.5 h-2.5" /> };
                             return undefined;
                         };
+                        
+                        const notes = meetingNotes[task.taskId] || [];
+                        const latestNote = getLatestMeetingNote(notes);
+                        const blockedByLabel =
+                            isBlocked && latestNote?.isStall && latestNote.blockedBy && latestNote.blockedBy !== personData.person
+                                ? latestNote.blockedBy
+                                : isBlocked && task.blockedBy && task.blockedBy !== personData.person
+                                    ? task.blockedBy
+                                    : undefined;
                         
                         return (
                             <DraggableTaskCard
@@ -548,6 +844,7 @@ function PersonSingleView({
                                 showQuickAdd
                                 onQuickAdd={() => dailyTodos.addTodo(personData.person, dateStr, task.taskId)}
                                 categoryLabel={getCategoryLabel()}
+                                blockedByLabel={blockedByLabel}
                             />
                         );
                     })}
@@ -577,8 +874,52 @@ function PersonSingleView({
                         <h3 className="font-semibold text-zinc-100">
                             {isToday(selectedDate) ? "Today's Plan" : format(selectedDate, 'MMM d')}
                         </h3>
+                        {sortedTodos.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleCopyForDM}
+                                className="p-1.5 rounded-md hover:bg-zinc-700/80 text-zinc-400 hover:text-zinc-200 transition-colors"
+                                title="Copy to-do list for DM"
+                            >
+                                {copied ? (
+                                    <span className="text-[10px] text-emerald-400 font-medium px-1">Copied!</span>
+                                ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                )}
+                            </button>
+                        )}
+                        {sortedTodos.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleSendToWebhook}
+                                disabled={sending}
+                                className={`p-1.5 rounded-md transition-colors ${
+                                    sending
+                                        ? 'bg-blue-900/50 text-blue-300 cursor-not-allowed'
+                                        : sendResult
+                                            ? sendResult.success
+                                                ? 'bg-emerald-900/50 text-emerald-300'
+                                                : 'bg-red-900/50 text-red-300'
+                                            : 'hover:bg-blue-700/80 text-blue-400 hover:text-blue-200'
+                                }`}
+                                title="Send to-do list to Lark"
+                            >
+                                {sending ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : sendResult ? (
+                                    <span className={`text-[10px] font-medium px-1 ${sendResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        {sendResult.message}
+                                    </span>
+                                ) : (
+                                    <Send className="w-3.5 h-3.5" />
+                                )}
+                            </button>
+                        )}
                     </div>
                     <div className="flex items-center gap-2">
+                        {dailyTodos.saving && (
+                            <span className="text-[9px] text-zinc-500 animate-pulse">Saving...</span>
+                        )}
                         {sortedTodos.length > 0 && (
                             <span className="text-[10px] text-emerald-400">
                                 {sortedTodos.filter((t) => t.completedAt).length}/{sortedTodos.length} done
@@ -601,6 +942,16 @@ function PersonSingleView({
                     {sortedTodos.map((todoItem) => {
                         const task = analyses[todoItem.taskId];
                         if (!task) return null;
+                        const notes = meetingNotes[task.taskId] || [];
+                        const latestNote = getLatestMeetingNote(notes);
+                        const isBlockedByOthers =
+                            latestNote?.isStall && latestNote.blockedBy && latestNote.blockedBy !== personData.person;
+                        const blockedByLabel =
+                            isBlockedByOthers && latestNote?.blockedBy
+                                ? latestNote.blockedBy
+                                : isBlockedByOthers && task.blockedBy && task.blockedBy !== personData.person
+                                    ? task.blockedBy
+                                    : undefined;
                         return (
                             <DraggableTaskCard
                                 key={todoItem.taskId}
@@ -612,6 +963,7 @@ function PersonSingleView({
                                 todoCompleted={!!todoItem.completedAt}
                                 onRemoveFromTodo={() => dailyTodos.removeTodo(personData.person, dateStr, todoItem.taskId)}
                                 onToggleComplete={() => dailyTodos.toggleTodoComplete(personData.person, dateStr, todoItem.taskId)}
+                                blockedByLabel={blockedByLabel}
                             />
                         );
                     })}
@@ -796,7 +1148,8 @@ function CompareView({
         const activeTaskIds = new Set(todayLogs.map((l) => l.taskId));
         return Array.from(activeTaskIds)
             .map((taskId) => analyses[taskId])
-            .filter((t): t is TaskAnalysis => !!t && t.currentStatus !== 'Completed' && t.currentStatus !== 'Staging Passed');
+            // Treat "Staging Passed" as still relevant activity; only hide fully completed tasks.
+            .filter((t): t is TaskAnalysis => !!t && t.currentStatus !== 'Completed');
     }, [rawLogs, todayDateStr, personData.person, analyses]);
 
     const plannedTaskIds = new Set(todayTodos.map((t) => t.taskId));
@@ -1219,12 +1572,13 @@ function CompareView({
 
 interface AllPersonsViewProps {
     personData: PersonMeetingData[];
+    categoryFilter: Record<CategoryFilterKey, boolean>;
     highRiskIds: Set<string>;
     onTaskClick: (taskId: string) => void;
     meetingNotes: Record<string, MeetingNote[]>;
 }
 
-function AllPersonsView({ personData, highRiskIds, onTaskClick, meetingNotes }: AllPersonsViewProps) {
+function AllPersonsView({ personData, categoryFilter, highRiskIds, onTaskClick, meetingNotes }: AllPersonsViewProps) {
     const renderTaskButton = (task: TaskAnalysis, colorScheme: 'doing' | 'blocking' | 'blocked' | 'notStarted') => {
         const isHighRisk = highRiskIds.has(task.taskId);
         const colorClasses = {
@@ -1283,31 +1637,36 @@ function AllPersonsView({ personData, highRiskIds, onTaskClick, meetingNotes }: 
                                 <h3 className="font-semibold text-zinc-100">{data.person}</h3>
                             </div>
                             <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
-                                {data.categories.doing.length > 0 && (
+                                {categoryFilter.doing && data.categories.doing.length > 0 && (
                                     <Badge className="bg-blue-950/50 text-blue-300 border-blue-800/50">
                                         {data.categories.doing.length} doing
                                     </Badge>
                                 )}
-                                {data.categories.blockingOthers.length > 0 && (
+                                {categoryFilter.blockingOthers && data.categories.blockingOthers.length > 0 && (
                                     <Badge className="bg-amber-950/50 text-amber-300 border-amber-800/50">
                                         {data.categories.blockingOthers.length} blocking
                                     </Badge>
                                 )}
-                                {data.categories.blockedByOthers.length > 0 && (
+                                {categoryFilter.blockedByOthers && data.categories.blockedByOthers.length > 0 && (
                                     <Badge className="bg-red-950/50 text-red-300 border-red-800/50">
                                         {data.categories.blockedByOthers.length} blocked
                                     </Badge>
                                 )}
-                                {data.categories.notStartedInSprint.length > 0 && (
+                                {categoryFilter.notStarted && data.categories.notStartedInSprint.length > 0 && (
+                                    <Badge className="bg-orange-950/50 text-orange-300 border-orange-800/50">
+                                        {data.categories.notStartedInSprint.length} no activity
+                                    </Badge>
+                                )}
+                                {categoryFilter.other && data.categories.other.length > 0 && (
                                     <Badge className="bg-zinc-800/50 text-zinc-400 border-zinc-700/50">
-                                        {data.categories.notStartedInSprint.length} not started
+                                        {data.categories.other.length} pending
                                     </Badge>
                                 )}
                             </div>
                         </div>
 
                         <div className="space-y-3">
-                            {data.categories.doing.length > 0 && (
+                            {categoryFilter.doing && data.categories.doing.length > 0 && (
                                 <div>
                                     <div className="flex items-center gap-2 mb-2 text-blue-400">
                                         <PlayCircle className="w-3 h-3" />
@@ -1319,11 +1678,11 @@ function AllPersonsView({ personData, highRiskIds, onTaskClick, meetingNotes }: 
                                 </div>
                             )}
 
-                            {data.categories.blockingOthers.length > 0 && (
+                            {categoryFilter.blockingOthers && data.categories.blockingOthers.length > 0 && (
                                 <div>
                                     <div className="flex items-center gap-2 mb-2 text-amber-400">
                                         <Hand className="w-3 h-3" />
-                                        <span className="text-[10px] font-semibold uppercase">Blocking</span>
+                                        <span className="text-[10px] font-semibold uppercase">Blocking others</span>
                                     </div>
                                     <div className="space-y-1">
                                         {data.categories.blockingOthers.map((task) => renderTaskButton(task, 'blocking'))}
@@ -1331,11 +1690,11 @@ function AllPersonsView({ personData, highRiskIds, onTaskClick, meetingNotes }: 
                                 </div>
                             )}
 
-                            {data.categories.blockedByOthers.length > 0 && (
+                            {categoryFilter.blockedByOthers && data.categories.blockedByOthers.length > 0 && (
                                 <div>
                                     <div className="flex items-center gap-2 mb-2 text-red-400">
                                         <UserX className="w-3 h-3" />
-                                        <span className="text-[10px] font-semibold uppercase">Blocked</span>
+                                        <span className="text-[10px] font-semibold uppercase">Blocked by others</span>
                                     </div>
                                     <div className="space-y-1">
                                         {data.categories.blockedByOthers.map((task) => renderTaskButton(task, 'blocked'))}
@@ -1343,14 +1702,26 @@ function AllPersonsView({ personData, highRiskIds, onTaskClick, meetingNotes }: 
                                 </div>
                             )}
 
-                            {data.categories.notStartedInSprint.length > 0 && (
+                            {categoryFilter.notStarted && data.categories.notStartedInSprint.length > 0 && (
                                 <div>
-                                    <div className="flex items-center gap-2 mb-2 text-zinc-400">
+                                    <div className="flex items-center gap-2 mb-2 text-orange-400">
                                         <AlertTriangle className="w-3 h-3" />
-                                        <span className="text-[10px] font-semibold uppercase">Not Started</span>
+                                        <span className="text-[10px] font-semibold uppercase">No Activity in Sprint</span>
                                     </div>
                                     <div className="space-y-1">
                                         {data.categories.notStartedInSprint.map((task) => renderTaskButton(task, 'notStarted'))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {categoryFilter.other && data.categories.other.length > 0 && (
+                                <div>
+                                    <div className="flex items-center gap-2 mb-2 text-zinc-400">
+                                        <Clock className="w-3 h-3" />
+                                        <span className="text-[10px] font-semibold uppercase">Pending</span>
+                                    </div>
+                                    <div className="space-y-1">
+                                        {data.categories.other.map((task) => renderTaskButton(task, 'notStarted'))}
                                     </div>
                                 </div>
                             )}
@@ -1383,29 +1754,36 @@ export function DailyMeetingView({
     const [showHistory, setShowHistory] = useState(false);
     const [showCompare, setShowCompare] = useState(false);
     const [personDropdownOpen, setPersonDropdownOpen] = useState(false);
+    const [categoryFilter, setCategoryFilter] = useState<Record<CategoryFilterKey, boolean>>(() => ({ ...DEFAULT_CATEGORY_FILTER }));
+
+    const filteredPersonData = useMemo(() => {
+        return personData.filter((p) => getVisibleTaskCount(p, categoryFilter) > 0);
+    }, [personData, categoryFilter]);
 
     const currentPersonData = useMemo(() => {
-        if (!selectedPerson && personData.length > 0) {
-            return personData[0];
+        if (!selectedPerson && filteredPersonData.length > 0) {
+            return filteredPersonData[0];
         }
-        return personData.find((p) => p.person === selectedPerson) || personData[0];
-    }, [selectedPerson, personData]);
+        return filteredPersonData.find((p) => p.person === selectedPerson) || filteredPersonData[0];
+    }, [selectedPerson, filteredPersonData]);
 
     const stats = useMemo(() => {
         let totalDoing = 0;
         let totalBlocking = 0;
         let totalBlocked = 0;
         let totalNotStarted = 0;
+        let totalOther = 0;
 
-        personData.forEach((p) => {
-            totalDoing += p.categories.doing.length;
-            totalBlocking += p.categories.blockingOthers.length;
-            totalBlocked += p.categories.blockedByOthers.length;
-            totalNotStarted += p.categories.notStartedInSprint.length;
+        filteredPersonData.forEach((p) => {
+            if (categoryFilter.doing) totalDoing += p.categories.doing.length;
+            if (categoryFilter.blockingOthers) totalBlocking += p.categories.blockingOthers.length;
+            if (categoryFilter.blockedByOthers) totalBlocked += p.categories.blockedByOthers.length;
+            if (categoryFilter.notStarted) totalNotStarted += p.categories.notStartedInSprint.length;
+            if (categoryFilter.other) totalOther += p.categories.other.length;
         });
 
-        return { totalDoing, totalBlocking, totalBlocked, totalNotStarted };
-    }, [personData]);
+        return { totalDoing, totalBlocking, totalBlocked, totalNotStarted, totalOther };
+    }, [filteredPersonData, categoryFilter]);
 
     const navigateDate = useCallback((direction: 'prev' | 'next') => {
         setSelectedDate((prev) => {
@@ -1471,7 +1849,7 @@ export function DailyMeetingView({
                                         onClick={() => setPersonDropdownOpen(false)}
                                     />
                                     <div className="absolute top-full left-0 mt-1 w-64 max-h-80 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl z-20">
-                                        {personData.map((p) => (
+                                        {filteredPersonData.map((p) => (
                                             <button
                                                 key={p.person}
                                                 onClick={() => {
@@ -1571,24 +1949,75 @@ export function DailyMeetingView({
                     </div>
                 )}
 
+                {/* Category filter: Doing, Blocked by others, Blocking others, No Activity, Pending */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500 mr-1">Filter:</span>
+                    {(['doing', 'blockedByOthers', 'blockingOthers', 'notStarted', 'other'] as const).map((key) => {
+                        const labelMap: Record<CategoryFilterKey, string> = {
+                            doing: 'Doing',
+                            blockedByOthers: 'Blocked',
+                            blockingOthers: 'Blocking',
+                            notStarted: 'No Activity',
+                            other: 'Pending',
+                        };
+                        const label = labelMap[key];
+                        const active = categoryFilter[key];
+                        return (
+                            <button
+                                key={key}
+                                onClick={() => setCategoryFilter((prev) => ({ ...prev, [key]: !prev[key] }))}
+                                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors ${
+                                    active
+                                        ? key === 'doing'
+                                            ? 'bg-blue-600/80 text-white'
+                                            : key === 'blockedByOthers'
+                                                ? 'bg-red-600/80 text-white'
+                                                : key === 'blockingOthers'
+                                                    ? 'bg-amber-600/80 text-white'
+                                                    : key === 'notStarted'
+                                                        ? 'bg-orange-600/80 text-white'
+                                                        : 'bg-zinc-600 text-zinc-100'
+                                        : 'bg-zinc-800/80 text-zinc-500 hover:text-zinc-300'
+                                }`}
+                            >
+                                {label}
+                            </button>
+                        );
+                    })}
+                </div>
+
                 {/* Quick Stats */}
                 <div className="flex items-center gap-3 text-[10px]">
-                    <div className="flex items-center gap-1 text-blue-400">
-                        <PlayCircle className="w-3 h-3" />
-                        <span className="font-mono">{stats.totalDoing}</span>
-                    </div>
-                    <div className="flex items-center gap-1 text-amber-400">
-                        <Hand className="w-3 h-3" />
-                        <span className="font-mono">{stats.totalBlocking}</span>
-                    </div>
-                    <div className="flex items-center gap-1 text-red-400">
-                        <UserX className="w-3 h-3" />
-                        <span className="font-mono">{stats.totalBlocked}</span>
-                    </div>
-                    <div className="flex items-center gap-1 text-zinc-400">
-                        <AlertTriangle className="w-3 h-3" />
-                        <span className="font-mono">{stats.totalNotStarted}</span>
-                    </div>
+                    {categoryFilter.doing && (
+                        <div className="flex items-center gap-1 text-blue-400">
+                            <PlayCircle className="w-3 h-3" />
+                            <span className="font-mono">{stats.totalDoing}</span>
+                        </div>
+                    )}
+                    {categoryFilter.blockingOthers && (
+                        <div className="flex items-center gap-1 text-amber-400">
+                            <Hand className="w-3 h-3" />
+                            <span className="font-mono">{stats.totalBlocking}</span>
+                        </div>
+                    )}
+                    {categoryFilter.blockedByOthers && (
+                        <div className="flex items-center gap-1 text-red-400">
+                            <UserX className="w-3 h-3" />
+                            <span className="font-mono">{stats.totalBlocked}</span>
+                        </div>
+                    )}
+                    {categoryFilter.notStarted && (
+                        <div className="flex items-center gap-1 text-orange-400">
+                            <AlertTriangle className="w-3 h-3" />
+                            <span className="font-mono">{stats.totalNotStarted}</span>
+                        </div>
+                    )}
+                    {categoryFilter.other && (
+                        <div className="flex items-center gap-1 text-zinc-400">
+                            <Clock className="w-3 h-3" />
+                            <span className="font-mono">{stats.totalOther}</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -1611,8 +2040,13 @@ export function DailyMeetingView({
                 </div>
                 <ArrowRight className="w-2.5 h-2.5" />
                 <div className="flex items-center gap-1">
-                    <AlertTriangle className="w-2.5 h-2.5 text-zinc-500" />
-                    <span>Not Started</span>
+                    <AlertTriangle className="w-2.5 h-2.5 text-orange-500" />
+                    <span>No Activity</span>
+                </div>
+                <ArrowRight className="w-2.5 h-2.5" />
+                <div className="flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5 text-zinc-500" />
+                    <span>Pending</span>
                 </div>
             </div>
 
@@ -1622,9 +2056,15 @@ export function DailyMeetingView({
                     <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-50" />
                     <p>No active tasks found for the current sprint</p>
                 </div>
+            ) : filteredPersonData.length === 0 ? (
+                <div className="text-center py-12 text-zinc-500">
+                    <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>No one has tasks in the selected categories. Turn on more filters.</p>
+                </div>
             ) : viewMode === 'all' ? (
                 <AllPersonsView
-                    personData={personData}
+                    personData={filteredPersonData}
+                    categoryFilter={categoryFilter}
                     highRiskIds={highRiskIds}
                     onTaskClick={onTaskClick}
                     meetingNotes={meetingNotes}
@@ -1649,6 +2089,7 @@ export function DailyMeetingView({
             ) : currentPersonData ? (
                 <PersonSingleView
                     personData={currentPersonData}
+                    categoryFilter={categoryFilter}
                     analyses={analyses}
                     highRiskIds={highRiskIds}
                     onTaskClick={onTaskClick}
@@ -1656,6 +2097,8 @@ export function DailyMeetingView({
                     dailyTodos={dailyTodos}
                     rawLogs={rawLogs}
                     sprintStartSnapshot={sprintStartSnapshot}
+                    allPersonData={personData}
+                    meetingNotes={meetingNotes}
                 />
             ) : null}
         </div>

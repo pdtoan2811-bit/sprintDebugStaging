@@ -8,6 +8,7 @@ import {
     AlertTriangle,
     ChevronRight,
     Clock,
+    Copy,
     RefreshCw,
     Shield,
     Zap,
@@ -99,6 +100,40 @@ function formatStaleHours(ms: number): string {
     return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
 }
 
+/** Build readable DM text for one person's to-do list: title, recordLink, status, blockedBy, blocking others */
+function formatPersonListForDM(summary: PersonSummary, allSummaries: PersonSummary[]): string {
+    const lines: string[] = [
+        `📋 ${summary.person} – To-do list`,
+        '',
+    ];
+    // People who are blocked by this person (tasks where blockedBy === summary.person)
+    const blockingOthers = [
+        ...new Set(
+            allSummaries.flatMap((s) => s.tasks).filter((t) => t.blockedBy === summary.person).map((t) => t.currentPerson)
+        ),
+    ].filter(Boolean);
+    if (blockingOthers.length > 0) {
+        lines.push(`Blocking: ${blockingOthers.join(', ')}`);
+        lines.push('');
+    }
+    const sorted = sortTasks(summary.tasks);
+    sorted.forEach((task, i) => {
+        lines.push(`${i + 1}. ${task.taskName}`);
+        if (task.recordLink) {
+            lines.push(`   Link: ${task.recordLink}`);
+        }
+        lines.push(`   Status: ${task.currentStatus}`);
+        if (task.blockedBy) {
+            lines.push(`   Blocked by: ${task.blockedBy}`);
+        }
+        if (task.isStale && task.staleDurationMs > 0) {
+            lines.push(`   ⏱ Stale: ${formatStaleHours(task.staleDurationMs)}`);
+        }
+        lines.push('');
+    });
+    return lines.join('\n').trimEnd();
+}
+
 // ── Sort person summaries by total stale hours desc, then critical task count desc ──
 function sortSummaries(summaries: PersonSummary[]): PersonSummary[] {
     return [...summaries].sort((a, b) => {
@@ -114,6 +149,16 @@ function sortSummaries(summaries: PersonSummary[]): PersonSummary[] {
 }
 
 export function PersonnelOverview({ summaries, highRiskIds, onTaskClick }: PersonnelOverviewProps) {
+    const [copiedPerson, setCopiedPerson] = React.useState<string | null>(null);
+
+    const handleCopyForDM = React.useCallback((summary: PersonSummary) => {
+        const text = formatPersonListForDM(summary, summaries);
+        navigator.clipboard.writeText(text).then(() => {
+            setCopiedPerson(summary.person);
+            setTimeout(() => setCopiedPerson(null), 2000);
+        });
+    }, [summaries]);
+
     const sortedSummaries = sortSummaries(summaries);
 
     return (
@@ -123,6 +168,7 @@ export function PersonnelOverview({ summaries, highRiskIds, onTaskClick }: Perso
                 const hasCritical = summary.tasks.some((t) => t.riskLevel === 'critical');
                 const sortedTasks = sortTasks(summary.tasks);
                 const totalStaleMs = summary.tasks.reduce((sum, t) => sum + t.staleDurationMs, 0);
+                const justCopied = copiedPerson === summary.person;
 
                 return (
                     <div
@@ -140,6 +186,18 @@ export function PersonnelOverview({ summaries, highRiskIds, onTaskClick }: Perso
                                 <div className={`w-2.5 h-2.5 rounded-full ${hasCritical ? 'bg-red-500 animate-pulse' : hasBlockers ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'
                                     }`} />
                                 <h3 className="font-semibold text-zinc-100 text-sm">{summary.person}</h3>
+                                <button
+                                    type="button"
+                                    onClick={() => handleCopyForDM(summary)}
+                                    className="p-1.5 rounded-md hover:bg-zinc-700/80 text-zinc-400 hover:text-zinc-200 transition-colors"
+                                    title="Copy to-do list for DM"
+                                >
+                                    {justCopied ? (
+                                        <span className="text-[10px] text-emerald-400 font-medium">Copied!</span>
+                                    ) : (
+                                        <Copy className="w-3.5 h-3.5" />
+                                    )}
+                                </button>
                             </div>
                             <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
                                 <span>{summary.totalTasks} tasks</span>

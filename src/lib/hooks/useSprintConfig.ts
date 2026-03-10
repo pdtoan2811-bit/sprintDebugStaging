@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useData } from '../DataProvider';
 
 const STORAGE_KEY = 'sprint_relay_sprint_config';
 const OVERRIDE_KEY = 'sprint_relay_manual_sprint';
@@ -21,70 +22,59 @@ const DEFAULT_CONFIG: SprintConfig[] = [
 ];
 
 export function useSprintConfig() {
+    const { data: sharedData, isLoaded: sharedLoaded, updateKey, refetch: refetchShared } = useData();
     const [configs, setConfigs] = useState<SprintConfig[]>(DEFAULT_CONFIG);
     const [manualOverride, setManualOverride] = useState<string | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
 
-    const fetchData = useCallback(() => {
-        fetch('/api/data')
-            .then(res => res.json())
-            .then(data => {
-                if (data) {
-                    try {
-                        if (data[STORAGE_KEY]) {
-                            setConfigs(JSON.parse(data[STORAGE_KEY] || '[]'));
-                        } else {
-                            setConfigs(DEFAULT_CONFIG);
-                        }
-
-                        if (data[OVERRIDE_KEY]) {
-                            setManualOverride(data[OVERRIDE_KEY]);
-                        } else {
-                            setManualOverride(null);
-                        }
-                    } catch (e) {
-                        setConfigs(DEFAULT_CONFIG);
-                    }
-                } else {
-                    setConfigs(DEFAULT_CONFIG);
-                }
-                setIsLoaded(true);
-            })
-            .catch(() => {
-                setConfigs(DEFAULT_CONFIG);
-                setIsLoaded(true);
-            });
-    }, []);
-
     useEffect(() => {
-        fetchData();
-    }, [fetchData]);
+        if (!sharedLoaded) return;
+        try {
+            const raw = sharedData[STORAGE_KEY];
+            if (raw) {
+                const parsed = JSON.parse(raw || '[]');
+                setConfigs(Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_CONFIG);
+            } else {
+                setConfigs(DEFAULT_CONFIG);
+            }
+
+            if (sharedData[OVERRIDE_KEY]) {
+                setManualOverride(sharedData[OVERRIDE_KEY]);
+            } else {
+                setManualOverride(null);
+            }
+        } catch (e) {
+            setConfigs(DEFAULT_CONFIG);
+        }
+        setIsLoaded(true);
+    }, [sharedLoaded, sharedData]);
 
     const saveConfigs = useCallback(async (newConfigs: SprintConfig[]) => {
         setConfigs(newConfigs);
-        try {
-            await fetch('/api/data', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(newConfigs) })
-            });
-        } catch (err) {
-            console.error('Failed to save sprint config', err);
-        }
-    }, []);
+        updateKey(STORAGE_KEY, JSON.stringify(newConfigs));
+    }, [updateKey]);
 
     const saveManualOverride = useCallback(async (sprintNumber: string | null) => {
         setManualOverride(sprintNumber);
-        try {
-            await fetch('/api/data', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ [OVERRIDE_KEY]: sprintNumber })
-            });
-        } catch (err) {
-            console.error('Failed to save manual override', err);
-        }
-    }, []);
+        updateKey(OVERRIDE_KEY, sprintNumber);
+    }, [updateKey]);
+
+    /** Saves both config and override in one request to avoid race (one POST overwriting the other). */
+    const saveSprintSettings = useCallback(async (newConfigs: SprintConfig[], newOverride: string | null) => {
+        const body: Record<string, string | null> = {
+            [STORAGE_KEY]: JSON.stringify(newConfigs),
+            [OVERRIDE_KEY]: newOverride ?? null,
+        };
+        const res = await fetch('/api/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error('Failed to save sprint settings');
+        setConfigs(newConfigs);
+        setManualOverride(newOverride);
+        await refetchShared();
+    }, [refetchShared]);
 
     const getCurrentSprint = useCallback((): SprintConfig | undefined => {
         const today = new Date();
@@ -105,8 +95,8 @@ export function useSprintConfig() {
     }, [manualOverride, getCurrentSprint]);
 
     const refetch = useCallback(() => {
-        fetchData();
-    }, [fetchData]);
+        refetchShared();
+    }, [refetchShared]);
 
-    return { configs, saveConfigs, manualOverride, saveManualOverride, getCurrentSprint, getActiveSprintNumber, isLoaded, refetch };
+    return { configs, saveConfigs, manualOverride, saveManualOverride, saveSprintSettings, getCurrentSprint, getActiveSprintNumber, isLoaded, refetch };
 }

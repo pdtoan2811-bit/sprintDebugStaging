@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { RawLogEvent } from '../types';
+import { useData } from '../DataProvider';
 
 const STORAGE_KEY = 'sprint_relay_sprint_start';
 
@@ -25,33 +26,26 @@ export interface SprintStartOverrides {
 }
 
 export function useSprintStart() {
+    const { data: sharedData, isLoaded: sharedLoaded, updateKey } = useData();
     const [overrides, setOverrides] = useState<SprintStartOverrides>({});
     const [isLoaded, setIsLoaded] = useState(false);
 
     useEffect(() => {
-        fetch('/api/data')
-            .then(res => res.json())
-            .then(data => {
-                if (data && data[STORAGE_KEY]) {
-                    try {
-                        const parsed = JSON.parse(data[STORAGE_KEY]) as SprintStartOverrides;
-                        setOverrides(parsed);
-                    } catch (e) {
-                        console.error('Failed to parse sprint start overrides', e);
-                    }
-                }
-                setIsLoaded(true);
-            })
-            .catch(() => setIsLoaded(true));
-    }, []);
+        if (!sharedLoaded) return;
+        if (sharedData[STORAGE_KEY]) {
+            try {
+                const parsed = JSON.parse(sharedData[STORAGE_KEY]) as SprintStartOverrides;
+                setOverrides(parsed);
+            } catch (e) {
+                console.error('Failed to parse sprint start overrides', e);
+            }
+        }
+        setIsLoaded(true);
+    }, [sharedLoaded, sharedData]);
 
     const persist = useCallback((data: SprintStartOverrides) => {
-        fetch('/api/data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ [STORAGE_KEY]: JSON.stringify(data) })
-        }).catch(err => console.error('Failed to save sprint start overrides', err));
-    }, []);
+        updateKey(STORAGE_KEY, JSON.stringify(data));
+    }, [updateKey]);
 
     const getSprintStartSnapshot = useCallback((sprint: string, logs: RawLogEvent[]): SprintStartEntry[] => {
         if (!sprint || !logs || logs.length === 0) {

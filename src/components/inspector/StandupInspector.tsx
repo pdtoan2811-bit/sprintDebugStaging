@@ -58,7 +58,7 @@ export function StandupInspector({
     // Meeting note form state
     const [showMeetingForm, setShowMeetingForm] = useState(false);
     const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
-    const [meetingIsStall, setMeetingIsStall] = useState(false);
+    const [meetingIsStall, setMeetingIsStall] = useState(true);
     const [meetingStallReason, setMeetingStallReason] = useState('');
     const [meetingBlockedBy, setMeetingBlockedBy] = useState('');
     const [meetingSolution, setMeetingSolution] = useState('');
@@ -68,7 +68,7 @@ export function StandupInspector({
             // Reset meeting form
             setShowMeetingForm(false);
             setEditingNoteId(null);
-            setMeetingIsStall(false);
+            setMeetingIsStall(true);
             setMeetingStallReason('');
             setMeetingBlockedBy('');
             setMeetingSolution('');
@@ -88,7 +88,7 @@ export function StandupInspector({
             date: new Date().toISOString().split('T')[0],
             isStall: meetingIsStall,
             stallReason: meetingIsStall ? meetingStallReason : '',
-            blockedBy: meetingBlockedBy,
+            blockedBy: meetingIsStall ? meetingBlockedBy : '',
             solution: meetingSolution,
             createdAt: new Date().toISOString(),
         };
@@ -101,7 +101,7 @@ export function StandupInspector({
 
         // Reset form
         setEditingNoteId(null);
-        setMeetingIsStall(false);
+        setMeetingIsStall(true);
         setMeetingStallReason('');
         setMeetingBlockedBy('');
         setMeetingSolution('');
@@ -331,7 +331,14 @@ export function StandupInspector({
                                 {/* Stall toggle */}
                                 <button
                                     type="button"
-                                    onClick={() => setMeetingIsStall(!meetingIsStall)}
+                                    onClick={() => {
+                                        const newIsStall = !meetingIsStall;
+                                        setMeetingIsStall(newIsStall);
+                                        if (!newIsStall) {
+                                            setMeetingBlockedBy('');
+                                            setMeetingStallReason('');
+                                        }
+                                    }}
                                     className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-medium transition-all ${meetingIsStall
                                         ? 'border-red-600/50 bg-red-950/40 text-red-300'
                                         : 'border-zinc-700 bg-zinc-900/50 text-zinc-400'
@@ -348,43 +355,54 @@ export function StandupInspector({
                                     )}
                                 </button>
 
-                                {/* Stall reason */}
+                                {/* Stall details - only shown when task is stalled */}
                                 {meetingIsStall && (
-                                    <div className="space-y-1.5">
-                                        <label className="text-[10px] text-red-400 font-semibold uppercase tracking-wider">Why is it stalled?</label>
-                                        <textarea
-                                            rows={2}
-                                            value={meetingStallReason}
-                                            onChange={(e) => setMeetingStallReason(e.target.value)}
-                                            placeholder="Describe why this task is stalled..."
-                                            className="w-full bg-zinc-900 border border-red-800/50 rounded-md px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
-                                        />
+                                    <div className="space-y-3 pl-3 border-l-2 border-red-800/50">
+                                        {/* Blocked by dropdown */}
+                                        <div className="space-y-1.5">
+                                            <label className="text-[10px] text-red-400 font-semibold uppercase tracking-wider">Blocked By (who is causing the stall?)</label>
+                                            <select
+                                                value={meetingBlockedBy}
+                                                onChange={(e) => setMeetingBlockedBy(e.target.value)}
+                                                className="w-full bg-zinc-900 border border-red-800/50 rounded-md px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-red-500 appearance-none"
+                                            >
+                                                <option value="">Select who is blocking...</option>
+                                                {assignedPeople.length > 0 && (
+                                                    <optgroup label="Assigned on this task">
+                                                        {assignedPeople.map((p) => (
+                                                            <option key={`assigned-${p}`} value={p}>{p}</option>
+                                                        ))}
+                                                    </optgroup>
+                                                )}
+                                                <optgroup label="Team Leaders">
+                                                    {TEAM_LEADERS.map((leader) => (
+                                                        <option key={`leader-${leader}`} value={leader}>{leader}</option>
+                                                    ))}
+                                                </optgroup>
+                                            </select>
+                                        </div>
+
+                                        {/* Stall reason */}
+                                        <div className="space-y-1.5">
+                                            <label className="text-[10px] text-red-400 font-semibold uppercase tracking-wider">Why is it stalled?</label>
+                                            <textarea
+                                                rows={2}
+                                                value={meetingStallReason}
+                                                onChange={(e) => setMeetingStallReason(e.target.value)}
+                                                placeholder="Describe why this task is stalled..."
+                                                className="w-full bg-zinc-900 border border-red-800/50 rounded-md px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
+                                            />
+                                        </div>
                                     </div>
                                 )}
 
-                                {/* Blocked by dropdown */}
-                                <div className="space-y-1.5">
-                                    <label className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Blocked By</label>
-                                    <select
-                                        value={meetingBlockedBy}
-                                        onChange={(e) => setMeetingBlockedBy(e.target.value)}
-                                        className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500 appearance-none"
-                                    >
-                                        <option value="">Not blocked</option>
-                                        {assignedPeople.length > 0 && (
-                                            <optgroup label="Assigned on this task">
-                                                {assignedPeople.map((p) => (
-                                                    <option key={`assigned-${p}`} value={p}>{p}</option>
-                                                ))}
-                                            </optgroup>
-                                        )}
-                                        <optgroup label="Team Leaders">
-                                            {TEAM_LEADERS.map((leader) => (
-                                                <option key={`leader-${leader}`} value={leader}>{leader}</option>
-                                            ))}
-                                        </optgroup>
-                                    </select>
-                                </div>
+                                {/* Info message when not stalled */}
+                                {!meetingIsStall && (
+                                    <div className="px-3 py-2 rounded-lg bg-emerald-950/30 border border-emerald-800/30 text-emerald-300 text-xs flex items-center gap-2">
+                                        <span>✓</span>
+                                        <span>Task is progressing normally. Toggle above to mark as stalled and assign a blocker.</span>
+                                    </div>
+                                )}
 
                                 {/* Solution */}
                                 <div className="space-y-1.5">

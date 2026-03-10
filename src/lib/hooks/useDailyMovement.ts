@@ -13,7 +13,13 @@ import {
 import { startOfDay, endOfDay, format } from 'date-fns';
 
 function getStatusIndex(status: string): number {
-    const found = WORKFLOW_STATUSES.find(s => s.name === status);
+    const normalized = status?.trim() ?? '';
+    if (!normalized) return -1;
+    // Exact match first
+    const exact = WORKFLOW_STATUSES.find(s => s.name === status);
+    if (exact) return exact.index;
+    // Case-insensitive so "Waiting To Integrate" etc. still count as progress
+    const found = WORKFLOW_STATUSES.find(s => s.name.toLowerCase() === normalized.toLowerCase());
     return found?.index ?? -1;
 }
 
@@ -69,8 +75,15 @@ function determineMovementType(
     const startIdx = getStatusIndex(startStatus);
     const endIdx = getStatusIndex(endStatus);
 
-    if (endIdx > startIdx) return 'forward';
-    if (endIdx < startIdx) return 'backward';
+    // Known indices: higher index = further along workflow = progress
+    if (endIdx >= 0 && startIdx >= 0) {
+        if (endIdx > startIdx) return 'forward';
+        if (endIdx < startIdx) return 'backward';
+        return 'same';
+    }
+    // One or both unknown: don't treat as recession (e.g. Not Started → Waiting to Integrate with wrong casing)
+    if (endIdx >= 0 && startIdx === -1) return 'forward'; // started day with unknown, ended in known = progress
+    if (endIdx === -1 && startIdx >= 0) return 'same';    // ended in unknown: inconclusive, not recession
     return 'same';
 }
 
@@ -271,10 +284,26 @@ export function computeDailyMovement(
         return b.totalEventsOnDay - a.totalEventsOnDay;
     });
 
-    const totalForward = personMovements.reduce((sum, p) => sum + p.forwardCount, 0);
-    const totalBackward = personMovements.reduce((sum, p) => sum + p.backwardCount, 0);
-    const totalSameWithEvents = personMovements.reduce((sum, p) => sum + p.sameWithEvents.length, 0);
-    const totalNoChange = personMovements.reduce((sum, p) => sum + p.noChange.length, 0);
+    // Count distinct tasks (same task touched by multiple people counts once)
+    const distinctForward = new Set<string>();
+    const distinctBackward = new Set<string>();
+    const distinctSame = new Set<string>();
+    const distinctNoChange = new Set<string>();
+    personMovements.forEach(p => {
+        p.movedForward.forEach(tm => distinctForward.add(tm.taskId));
+        p.movedBackward.forEach(tm => distinctBackward.add(tm.taskId));
+        p.sameWithEvents.forEach(tm => distinctSame.add(tm.taskId));
+        p.noChange.forEach(tm => distinctNoChange.add(tm.taskId));
+    });
+    const totalForward = distinctForward.size;
+    const totalBackward = distinctBackward.size;
+    const totalSameWithEvents = distinctSame.size;
+    const totalNoChange = distinctNoChange.size;
+    const totalTasksWithMovement = new Set([
+        ...distinctForward,
+        ...distinctBackward,
+        ...distinctSame,
+    ]).size;
 
     let topMover: string | null = null;
     let maxForward = 0;
@@ -287,7 +316,7 @@ export function computeDailyMovement(
 
     return {
         date: dateStr,
-        totalTasksWithMovement: totalForward + totalBackward + totalSameWithEvents,
+        totalTasksWithMovement,
         totalForward,
         totalBackward,
         totalSameWithEvents,
