@@ -5,6 +5,7 @@ import { TaskAnalysis, MeetingNote, RawLogEvent } from '@/lib/types';
 import { getStatusSeverity, isBottleneckStatus } from '@/lib/workflow-engine';
 import { useDailyTodos, DailyTodoItem } from '@/lib/hooks/useDailyTodos';
 import { Badge } from '../ui/badge';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { format, subDays, isToday, isYesterday } from 'date-fns';
 import {
     AlertTriangle,
@@ -391,7 +392,7 @@ function formatTodoListForWebhook(
     const blockingArray = [...blockingOthers];
     const summary = {
         total: todoItems.length,
-        completed: todoItems.filter(t => t.completed).length,
+        completed: todoItems.filter(t => t.status === 'Completed' || t.status === 'Staging Passed').length,
         blocked: blockedCount,
     };
 
@@ -464,6 +465,8 @@ interface DraggableTaskCardProps {
     showQuickAdd?: boolean;
     categoryLabel?: { text: string; color: string; icon: React.ReactNode };
     blockedByLabel?: string;
+    showAssignees?: boolean;
+    renderActions?: React.ReactNode;
 }
 
 function DraggableTaskCard({
@@ -481,6 +484,8 @@ function DraggableTaskCard({
     showQuickAdd = false,
     categoryLabel,
     blockedByLabel,
+    showAssignees = false,
+    renderActions,
 }: DraggableTaskCardProps) {
     const [isDragging, setIsDragging] = useState(false);
     const [mouseDownPos, setMouseDownPos] = useState<{ x: number; y: number } | null>(null);
@@ -605,6 +610,7 @@ function DraggableTaskCard({
                             Add
                         </button>
                     )}
+                    {renderActions}
                     <ChevronRight className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors flex-shrink-0" />
                 </div>
             </div>
@@ -628,6 +634,12 @@ function DraggableTaskCard({
                     </span>
                 )}
             </div>
+            {showAssignees && task.currentPerson && (
+                <div className="mt-2 pt-2 border-t border-zinc-800/50 flex items-center gap-1.5 text-[10px] text-zinc-400">
+                    <Users className="w-3 h-3 text-zinc-500" />
+                    <span className="truncate">{task.currentPerson}</span>
+                </div>
+            )}
             {showSprintGoal && task.sprintGoal && (
                 <div className="mt-2 pt-2 border-t border-zinc-800/50">
                     <div className={`flex items-center gap-1 text-[9px] ${task.currentStatus === task.sprintGoal ? 'text-emerald-400' : 'text-zinc-500'}`}>
@@ -654,6 +666,87 @@ function taskInVisibleCategory(taskId: string, personData: PersonMeetingData, fi
     if (filter.notStarted && personData.categories.notStartedInSprint.some((t) => t.taskId === taskId)) return true;
     if (filter.other && personData.categories.other.some((t) => t.taskId === taskId)) return true;
     return false;
+}
+
+function SyncTaskDropdown({ task, allPersonData, personData, dateStr, dailyTodos }: { task: TaskAnalysis, allPersonData: PersonMeetingData[], personData: PersonMeetingData, dateStr: string, dailyTodos: ReturnType<typeof useDailyTodos> }) {
+    const [selectedPersons, setSelectedPersons] = useState<Set<string>>(new Set());
+    const [isOpen, setIsOpen] = useState(false);
+
+    const otherPersons = allPersonData.filter(p => p.person !== personData.person);
+
+    const handleSync = () => {
+        selectedPersons.forEach(person => {
+            dailyTodos.addTodo(person, dateStr, task.taskId);
+        });
+        setIsOpen(false);
+        setSelectedPersons(new Set());
+    };
+
+    return (
+        <Popover open={isOpen} onOpenChange={setIsOpen}>
+            <PopoverTrigger asChild>
+                <div onClick={(e) => e.stopPropagation()}>
+                    <button
+                        className={`p-1.5 rounded-md transition-all ml-1 border shadow-sm ${isOpen ? 'bg-indigo-900/50 text-indigo-400 border-indigo-500/30' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-indigo-300 hover:bg-zinc-800 hover:border-indigo-500/50'}`}
+                        title="Sync task to others"
+                    >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-3 z-[100]" align="end" onClick={(e) => e.stopPropagation()}>
+                <div className="mb-2">
+                    <h4 className="text-sm font-semibold text-zinc-200">Sync to others</h4>
+                    <p className="text-xs text-zinc-400">Select team members to add this task to their today's plan.</p>
+                </div>
+                <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar pr-1 mb-3">
+                    {otherPersons.map(p => {
+                        const isSelected = selectedPersons.has(p.person);
+                        const alreadyHasIt = dailyTodos.getTodosForPersonDate(p.person, dateStr).some(t => t.taskId === task.taskId);
+                        
+                        return (
+                            <button
+                                key={p.person}
+                                disabled={alreadyHasIt}
+                                onClick={() => {
+                                    const next = new Set(selectedPersons);
+                                    if (next.has(p.person)) next.delete(p.person);
+                                    else next.add(p.person);
+                                    setSelectedPersons(next);
+                                }}
+                                className={`w-full flex items-center justify-between px-2 py-1.5 rounded-md text-sm transition-colors ${alreadyHasIt ? 'opacity-50 cursor-not-allowed bg-zinc-900 border border-zinc-800/50' : 'hover:bg-zinc-800'}`}
+                            >
+                                <span className={alreadyHasIt ? 'text-zinc-500' : 'text-zinc-300'}>{p.person}</span>
+                                {alreadyHasIt ? (
+                                    <span className="text-[9px] text-emerald-500 font-medium">Already in plan</span>
+                                ) : isSelected ? (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-indigo-400" />
+                                ) : (
+                                    <Circle className="w-3.5 h-3.5 text-zinc-600" />
+                                )}
+                            </button>
+                        );
+                    })}
+                </div>
+                <div className="flex justify-end gap-2">
+                    <button 
+                        onClick={() => setIsOpen(false)}
+                        className="px-2.5 py-1 rounded text-xs text-zinc-400 hover:text-zinc-200"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={handleSync}
+                        disabled={selectedPersons.size === 0}
+                        className="px-2.5 py-1 rounded text-xs bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 font-medium shadow-sm transition-all"
+                    >
+                        <RefreshCw className="w-3 h-3" />
+                        Sync ({selectedPersons.size})
+                    </button>
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
 }
 
 interface PersonSingleViewProps {
@@ -807,7 +900,7 @@ function PersonSingleView({
                     <span className="text-[9px] text-zinc-600">(sorted by priority)</span>
                 </div>
 
-                <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
                     {backlogTasks.map((task) => {
                         const isBlocking = blockingTaskIds.has(task.taskId);
                         const noActivityInSprint = notStartedTaskIds.has(task.taskId);
@@ -833,19 +926,44 @@ function PersonSingleView({
                                     ? task.blockedBy
                                     : undefined;
                         
+                        
+                        const assignees = task.currentPerson
+                            ? task.currentPerson.split(',').map((p) => p.trim()).filter(Boolean)
+                            : [];
+                        const isMultipleAssignees = assignees.length > 1;
+
                         return (
-                            <DraggableTaskCard
-                                key={task.taskId}
-                                task={task}
-                                isHighRisk={highRiskIds.has(task.taskId)}
-                                onTaskClick={onTaskClick}
-                                isDraggable
-                                onDragStart={handleDragStart}
-                                showQuickAdd
-                                onQuickAdd={() => dailyTodos.addTodo(personData.person, dateStr, task.taskId)}
-                                categoryLabel={getCategoryLabel()}
-                                blockedByLabel={blockedByLabel}
-                            />
+                            <div key={task.taskId} className="relative group/card">
+                                <DraggableTaskCard
+                                    task={task}
+                                    isHighRisk={highRiskIds.has(task.taskId)}
+                                    onTaskClick={onTaskClick}
+                                    isDraggable
+                                    onDragStart={handleDragStart}
+                                    showQuickAdd
+                                    onQuickAdd={() => dailyTodos.addTodo(personData.person, dateStr, task.taskId)}
+                                    categoryLabel={getCategoryLabel()}
+                                    blockedByLabel={blockedByLabel}
+                                    showAssignees={isMultipleAssignees}
+                                />
+                                {isMultipleAssignees && (
+                                    <div className="absolute top-2 right-16 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                assignees.forEach(assignee => {
+                                                    dailyTodos.addTodo(assignee, dateStr, task.taskId);
+                                                });
+                                            }}
+                                            className="flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-medium transition-all shadow-sm"
+                                            title="Add to today's plan for all assignees"
+                                        >
+                                            <Users className="w-2.5 h-2.5" />
+                                            Add for All
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         );
                     })}
 
@@ -938,7 +1056,7 @@ function PersonSingleView({
                     </div>
                 )}
 
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
                     {sortedTodos.map((todoItem) => {
                         const task = analyses[todoItem.taskId];
                         if (!task) return null;
@@ -964,6 +1082,17 @@ function PersonSingleView({
                                 onRemoveFromTodo={() => dailyTodos.removeTodo(personData.person, dateStr, todoItem.taskId)}
                                 onToggleComplete={() => dailyTodos.toggleTodoComplete(personData.person, dateStr, todoItem.taskId)}
                                 blockedByLabel={blockedByLabel}
+                                renderActions={
+                                    allPersonData.length > 1 && !todoItem.completedAt ? (
+                                        <SyncTaskDropdown 
+                                            task={task} 
+                                            allPersonData={allPersonData} 
+                                            personData={personData} 
+                                            dateStr={dateStr} 
+                                            dailyTodos={dailyTodos} 
+                                        />
+                                    ) : null
+                                }
                             />
                         );
                     })}
@@ -1300,6 +1429,10 @@ function CompareView({
                                         {yesterdayCompleted.map((todoItem) => {
                                             const task = analyses[todoItem.taskId];
                                             if (!task) return null;
+                                            const blockedByLabel =
+                                                task.blockedBy && task.blockedBy !== personData.person
+                                                    ? task.blockedBy
+                                                    : undefined;
                                             return (
                                                 <button
                                                     key={todoItem.taskId}
@@ -1315,6 +1448,21 @@ function CompareView({
                                                         <span className="text-[10px] font-mono text-zinc-500">{task.taskId}</span>
                                                         <span className="text-xs text-zinc-400 truncate flex-1 line-through">{task.taskName}</span>
                                                         <ChevronRight className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors flex-shrink-0" />
+                                                    </div>
+                                                    <div className="flex items-center gap-2 mt-1 ml-5 flex-wrap">
+                                                        {statusBadge(task.currentStatus)}
+                                                        {task.sprintGoal && (
+                                                            <span className="text-[9px] text-zinc-500 truncate max-w-[140px]" title={task.sprintGoal}>
+                                                                <Target className="w-2.5 h-2.5 inline mr-0.5 align-middle" />
+                                                                {task.sprintGoal}
+                                                            </span>
+                                                        )}
+                                                        {blockedByLabel && (
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-950/50 text-red-300 flex items-center gap-1">
+                                                                <Hand className="w-2.5 h-2.5" />
+                                                                Blocked by {blockedByLabel}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </button>
                                             );
@@ -1336,6 +1484,10 @@ function CompareView({
                                             const isCarryOver = carryOverTasks.some((c) => c.taskId === todoItem.taskId);
                                             const isAddedToToday = todayTaskIds.has(todoItem.taskId);
                                             if (!task) return null;
+                                            const blockedByLabel =
+                                                task.blockedBy && task.blockedBy !== personData.person
+                                                    ? task.blockedBy
+                                                    : undefined;
                                             return (
                                                 <button
                                                     key={todoItem.taskId}
@@ -1367,6 +1519,21 @@ function CompareView({
                                                             </span>
                                                         )}
                                                         <ChevronRight className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors flex-shrink-0" />
+                                                    </div>
+                                                    <div className="flex items-center gap-2 mt-1 ml-5 flex-wrap">
+                                                        {statusBadge(task.currentStatus)}
+                                                        {task.sprintGoal && (
+                                                            <span className="text-[9px] text-zinc-500 truncate max-w-[140px]" title={task.sprintGoal}>
+                                                                <Target className="w-2.5 h-2.5 inline mr-0.5 align-middle" />
+                                                                {task.sprintGoal}
+                                                            </span>
+                                                        )}
+                                                        {blockedByLabel && (
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-950/50 text-red-300 flex items-center gap-1">
+                                                                <Hand className="w-2.5 h-2.5" />
+                                                                Blocked by {blockedByLabel}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </button>
                                             );
@@ -1410,6 +1577,10 @@ function CompareView({
                                 if (!task) return null;
                                 const hasActivity = plannedWithActivity.some((t) => t.taskId === todoItem.taskId);
                                 const wasYesterday = yesterdayTodos.some((t) => t.taskId === todoItem.taskId);
+                                const blockedByLabel =
+                                    task.blockedBy && task.blockedBy !== personData.person
+                                        ? task.blockedBy
+                                        : undefined;
                                 return (
                                     <button
                                         key={todoItem.taskId}
@@ -1452,6 +1623,21 @@ function CompareView({
                                             </div>
                                             <ChevronRight className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors flex-shrink-0" />
                                         </div>
+                                        <div className="flex items-center gap-2 mt-1 ml-5 flex-wrap">
+                                            {statusBadge(task.currentStatus)}
+                                            {task.sprintGoal && (
+                                                <span className="text-[9px] text-zinc-500 truncate max-w-[140px]" title={task.sprintGoal}>
+                                                    <Target className="w-2.5 h-2.5 inline mr-0.5 align-middle" />
+                                                    {task.sprintGoal}
+                                                </span>
+                                            )}
+                                            {blockedByLabel && (
+                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-950/50 text-red-300 flex items-center gap-1">
+                                                    <Hand className="w-2.5 h-2.5" />
+                                                    Blocked by {blockedByLabel}
+                                                </span>
+                                            )}
+                                        </div>
                                     </button>
                                 );
                             })}
@@ -1471,6 +1657,10 @@ function CompareView({
                                     const isBlocking = blockingTaskIds.has(task.taskId);
                                     const isStale = task.isStale;
                                     const isAlreadyInToday = todayTaskIds.has(task.taskId);
+                                    const blockedByLabel =
+                                        task.blockedBy && task.blockedBy !== personData.person
+                                            ? task.blockedBy
+                                            : undefined;
                                     return (
                                         <div
                                             key={task.taskId}
@@ -1504,17 +1694,35 @@ function CompareView({
                                                     {task.taskName}
                                                 </span>
                                                 {!isAlreadyInToday && (
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            dailyTodos.addTodo(personData.person, todayStr, task.taskId);
-                                                        }}
-                                                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[9px] font-medium transition-colors"
-                                                        title="Add to today's plan"
-                                                    >
-                                                        <Plus className="w-2.5 h-2.5" />
-                                                        Add to Today
-                                                    </button>
+                                                    <div className="flex items-center gap-1">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                dailyTodos.addTodo(personData.person, todayStr, task.taskId);
+                                                            }}
+                                                            className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[9px] font-medium transition-colors"
+                                                            title="Add to today's plan"
+                                                        >
+                                                            <Plus className="w-2.5 h-2.5" />
+                                                            Add to Today
+                                                        </button>
+                                                        {task.currentPerson && task.currentPerson.split(',').map(p => p.trim()).filter(Boolean).length > 1 && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    const assignees = task.currentPerson.split(',').map(p => p.trim()).filter(Boolean);
+                                                                    assignees.forEach(assignee => {
+                                                                        dailyTodos.addTodo(assignee, todayStr, task.taskId);
+                                                                    });
+                                                                }}
+                                                                className="flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-medium transition-colors"
+                                                                title="Add for all assignees"
+                                                            >
+                                                                <Users className="w-2.5 h-2.5" />
+                                                                Add for All
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 )}
                                                 {isAlreadyInToday && (
                                                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-950/50 text-blue-300">
@@ -1525,10 +1733,16 @@ function CompareView({
                                             </div>
                                             <div className="flex items-center gap-2 mt-1 ml-5 flex-wrap">
                                                 {statusBadge(task.currentStatus)}
-                                                {isBlocking && (
-                                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/50 text-amber-300 flex items-center gap-1">
+                                                {task.sprintGoal && (
+                                                    <span className="text-[9px] text-zinc-500 truncate max-w-[140px]" title={task.sprintGoal}>
+                                                        <Target className="w-2.5 h-2.5 inline mr-0.5 align-middle" />
+                                                        {task.sprintGoal}
+                                                    </span>
+                                                )}
+                                                {blockedByLabel && (
+                                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-950/50 text-red-300 flex items-center gap-1">
                                                         <Hand className="w-2.5 h-2.5" />
-                                                        Blocking others
+                                                        Blocked by {blockedByLabel}
                                                     </span>
                                                 )}
                                                 {isStale && (
@@ -1733,6 +1947,533 @@ function AllPersonsView({ personData, categoryFilter, highRiskIds, onTaskClick, 
     );
 }
 
+interface SquadsViewProps {
+    analyses: Record<string, TaskAnalysis>;
+    categoryFilter: Record<CategoryFilterKey, boolean>;
+    highRiskIds: Set<string>;
+    onTaskClick: (taskId: string) => void;
+    meetingNotes: Record<string, MeetingNote[]>;
+    dailyTodos: ReturnType<typeof useDailyTodos>;
+    selectedDate: Date;
+    allPersonData: PersonMeetingData[];
+}
+
+function SquadsView({
+    analyses,
+    categoryFilter,
+    highRiskIds,
+    onTaskClick,
+    meetingNotes,
+    dailyTodos,
+    selectedDate,
+    allPersonData,
+}: SquadsViewProps) {
+    const [selectedPersonsFilter, setSelectedPersonsFilter] = useState<Set<string>>(new Set());
+    const [dragOverTodo, setDragOverTodo] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const [sending, setSending] = useState(false);
+    const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
+    const dateStr = format(selectedDate, 'yyyy-MM-dd');
+
+    const squadMembers = Array.from(selectedPersonsFilter);
+
+    const handleCopyForDM = useCallback(() => {
+        const texts = squadMembers.map(member => {
+            const todosForDate = dailyTodos.getTodosForPersonDate(member, dateStr);
+            if (todosForDate.length === 0) return null;
+            return formatTodoListForDM(member, todosForDate, analyses, meetingNotes, allPersonData);
+        }).filter(Boolean);
+        
+        if (texts.length === 0) return;
+        
+        navigator.clipboard.writeText(texts.join('\n\n---\n\n')).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        });
+    }, [squadMembers, dateStr, dailyTodos, analyses, meetingNotes, allPersonData]);
+
+    const handleSendToWebhook = useCallback(async () => {
+        if (sending) return;
+
+        setSending(true);
+        setSendResult(null);
+        
+        let allSuccess = true;
+        let errorMessage = '';
+        let sentCount = 0;
+
+        for (const member of squadMembers) {
+            const todosForDate = dailyTodos.getTodosForPersonDate(member, dateStr);
+            if (todosForDate.length === 0) continue;
+
+            const payload = formatTodoListForWebhook(
+                member,
+                dateStr,
+                todosForDate,
+                analyses,
+                meetingNotes,
+                allPersonData
+            );
+            
+            const result = await sendTodoListToWebhook(payload);
+            if (!result.success) {
+                allSuccess = false;
+                errorMessage = result.error || 'Failed to send';
+                break;
+            }
+            sentCount++;
+        }
+        
+        setSending(false);
+        if (sentCount === 0) {
+            setSendResult({ success: false, message: 'No tasks to send' });
+        } else {
+            setSendResult({
+                success: allSuccess,
+                message: allSuccess ? 'Sent for all!' : errorMessage,
+            });
+        }
+        
+        setTimeout(() => setSendResult(null), 3000);
+    }, [sending, squadMembers, dateStr, dailyTodos, analyses, meetingNotes, allPersonData]);
+
+    // Compute derived tasks for Backlog
+    const { sharedBacklog, individualBacklog } = useMemo(() => {
+        const shared: TaskAnalysis[] = [];
+        const individual: Record<string, TaskAnalysis[]> = {};
+        squadMembers.forEach(sm => individual[sm] = []);
+
+        const uniqueTasks = new Map<string, TaskAnalysis>();
+        squadMembers.forEach(sm => {
+            const data = allPersonData.find(p => p.person === sm);
+            if (data) {
+                data.allTasks.forEach(t => {
+                    if (taskInVisibleCategory(t.taskId, data, categoryFilter)) {
+                        uniqueTasks.set(t.taskId, t);
+                    }
+                });
+            }
+        });
+
+        uniqueTasks.forEach(task => {
+            const assignees = task.currentPerson ? task.currentPerson.split(',').map(p => p.trim()) : [];
+            const involved = squadMembers.filter(sm => assignees.includes(sm));
+            
+            // Check if fully planned by all involved squad members
+            const isFullyPlanned = involved.length > 0 && involved.every(sm => {
+                const todos = dailyTodos.getTodosForPersonDate(sm, dateStr);
+                return todos.some(todo => todo.taskId === task.taskId);
+            });
+            
+            if (isFullyPlanned) return; // Skip if fully planned
+
+            if (involved.length > 1) {
+                shared.push(task);
+            } else if (involved.length === 1) {
+                individual[involved[0]].push(task);
+            }
+        });
+
+        // Sort them for consistent viewing
+        shared.sort((a, b) => b.staleDurationMs - a.staleDurationMs);
+        Object.keys(individual).forEach(key => {
+            individual[key].sort((a, b) => b.staleDurationMs - a.staleDurationMs);
+        });
+
+        return { sharedBacklog: shared, individualBacklog: individual };
+    }, [allPersonData, squadMembers, categoryFilter, dailyTodos, dateStr]);
+
+    // Compute derived tasks for Squad Plan
+    const { sharedPlans, individualPlans } = useMemo(() => {
+        const shared = new Map<string, { task: TaskAnalysis, plannedBy: Set<string>, involved: string[] }>();
+        const individual: Record<string, { task: TaskAnalysis, completedAt?: string }[]> = {};
+        squadMembers.forEach(sm => individual[sm] = []);
+
+        squadMembers.forEach(sm => {
+            const todos = dailyTodos.getTodosForPersonDate(sm, dateStr);
+            todos.forEach(todo => {
+                const task = analyses[todo.taskId];
+                if (!task) return;
+
+                const assignees = task.currentPerson ? task.currentPerson.split(',').map(p => p.trim()) : [];
+                const involved = squadMembers.filter(m => assignees.includes(m));
+
+                if (involved.length > 1) {
+                    if (!shared.has(task.taskId)) {
+                        shared.set(task.taskId, { task, plannedBy: new Set([sm]), involved });
+                    } else {
+                        shared.get(task.taskId)!.plannedBy.add(sm);
+                    }
+                } else if (involved.length === 1) {
+                    if (!individual[sm].some(t => t.task.taskId === task.taskId)) {
+                        individual[sm].push({ task, completedAt: todo.completedAt });
+                    }
+                } else {
+                    if (!individual[sm].some(t => t.task.taskId === task.taskId)) {
+                        individual[sm].push({ task, completedAt: todo.completedAt });
+                    }
+                }
+            });
+        });
+
+        return { sharedPlans: Array.from(shared.values()), individualPlans: individual };
+    }, [squadMembers, dailyTodos, dateStr, analyses]);
+
+    const handleDragStart = (e: DragEvent, taskId: string) => {
+        e.dataTransfer.setData('text/plain', taskId);
+        e.dataTransfer.effectAllowed = 'move';
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        setDragOverTodo(true);
+    };
+
+    const handleDragLeave = () => {
+        setDragOverTodo(false);
+    };
+
+    const handleDrop = (e: DragEvent) => {
+        e.preventDefault();
+        setDragOverTodo(false);
+        const taskId = e.dataTransfer.getData('text/plain');
+        if (taskId) {
+            const task = analyses[taskId];
+            if (!task) return;
+            const assignees = task.currentPerson ? task.currentPerson.split(',').map(p => p.trim()) : [];
+            const involved = squadMembers.filter(m => assignees.includes(m));
+            
+            if (involved.length > 0) {
+                involved.forEach(sm => {
+                    const todos = dailyTodos.getTodosForPersonDate(sm, dateStr);
+                    if (!todos.some(t => t.taskId === taskId)) {
+                        dailyTodos.addTodo(sm, dateStr, taskId);
+                    }
+                });
+            } else if (squadMembers.length === 1) {
+                 const todos = dailyTodos.getTodosForPersonDate(squadMembers[0], dateStr);
+                 if (!todos.some(t => t.taskId === taskId)) {
+                     dailyTodos.addTodo(squadMembers[0], dateStr, taskId);
+                 }
+            }
+        }
+    };
+
+    const renderCard = (task: TaskAnalysis, context: 'backlog' | 'plan', member?: string, completed?: boolean, isSharedPlan?: boolean, sharedPlanData?: { plannedBy: Set<string>, involved: string[] }) => {
+        const notes = meetingNotes[task.taskId] || [];
+        const latestNote = getLatestMeetingNote(notes);
+        const isBlockedByOthers = latestNote?.isStall && latestNote.blockedBy;
+        const blockedByLabel = isBlockedByOthers ? latestNote.blockedBy : task.blockedBy;
+
+        const getCategoryLabel = () => {
+            if (task.currentStatus === 'Reprocess' || task.currentStatus === 'Reviewing' || task.currentStatus === 'Waiting to Integrate') {
+                return { text: 'In bottleneck', color: 'bg-amber-950/50 text-amber-300', icon: <AlertTriangle className="w-2.5 h-2.5" /> };
+            }
+            if (ACTIVE_STATUSES.has(task.currentStatus)) {
+                return { text: 'Active', color: 'bg-blue-950/50 text-blue-300', icon: <PlayCircle className="w-2.5 h-2.5" /> };
+            }
+            if (task.currentStatus === 'Not Started') {
+                return { text: 'Not started', color: 'bg-zinc-800/50 text-zinc-400', icon: <Circle className="w-2.5 h-2.5" /> };
+            }
+            return undefined;
+        };
+
+        const onQuickAdd = () => {
+            const assignees = task.currentPerson ? task.currentPerson.split(',').map(p => p.trim()) : [];
+            const involved = squadMembers.filter(m => assignees.includes(m));
+            if (involved.length > 0) {
+                involved.forEach(sm => dailyTodos.addTodo(sm, dateStr, task.taskId));
+            } else if (squadMembers.length === 1) {
+                dailyTodos.addTodo(squadMembers[0], dateStr, task.taskId);
+            }
+        };
+
+        const onRemove = () => {
+            if (isSharedPlan && sharedPlanData) {
+                sharedPlanData.plannedBy.forEach(sm => dailyTodos.removeTodo(sm, dateStr, task.taskId));
+            } else if (member) {
+                dailyTodos.removeTodo(member, dateStr, task.taskId);
+            }
+        };
+
+        const onToggle = () => {
+            if (isSharedPlan && sharedPlanData) {
+                sharedPlanData.plannedBy.forEach(sm => dailyTodos.toggleTodoComplete(sm, dateStr, task.taskId));
+            } else if (member) {
+                dailyTodos.toggleTodoComplete(member, dateStr, task.taskId);
+            }
+        };
+
+        return (
+            <div key={task.taskId} className="relative group/card">
+                <DraggableTaskCard
+                    task={task}
+                    isHighRisk={highRiskIds.has(task.taskId)}
+                    onTaskClick={onTaskClick}
+                    isDraggable={context === 'backlog'}
+                    onDragStart={handleDragStart}
+                    isInTodoList={context === 'plan'}
+                    todoCompleted={completed}
+                    showSprintGoal={context === 'plan'}
+                    showQuickAdd={context === 'backlog'}
+                    onQuickAdd={onQuickAdd}
+                    onRemoveFromTodo={onRemove}
+                    onToggleComplete={onToggle}
+                    categoryLabel={getCategoryLabel()}
+                    blockedByLabel={blockedByLabel}
+                    renderActions={
+                        isSharedPlan && sharedPlanData && !completed ? (
+                            <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-700 rounded p-0.5" onClick={(e) => e.stopPropagation()}>
+                                {sharedPlanData.involved.map(inv => {
+                                    const isPlanning = sharedPlanData.plannedBy.has(inv);
+                                    return (
+                                        <button
+                                            key={inv}
+                                            onClick={() => {
+                                                if (isPlanning) dailyTodos.removeTodo(inv, dateStr, task.taskId);
+                                                else dailyTodos.addTodo(inv, dateStr, task.taskId);
+                                            }}
+                                            className={`w-5 h-5 flex items-center justify-center rounded text-[8px] font-bold uppercase transition-colors ${
+                                                isPlanning 
+                                                    ? 'bg-indigo-600 text-white' 
+                                                    : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300'
+                                            }`}
+                                            title={isPlanning ? `${inv} planned this` : `Add to ${inv}'s plan`}
+                                        >
+                                            {inv.slice(0, 2)}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        ) : null
+                    }
+                />
+            </div>
+        );
+    };
+
+    return (
+        <div className="space-y-4 flex flex-col min-h-[500px]">
+            {/* Personnel Selector Row */}
+            <div className="bg-zinc-950/50 p-3 rounded-xl border border-zinc-800 flex flex-col gap-2 flex-shrink-0">
+                <div className="flex items-center gap-2 mb-1">
+                    <Users className="w-4 h-4 text-indigo-400" />
+                    <span className="font-semibold text-zinc-200 text-sm">Gradually form your squad</span>
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
+                    {allPersonData.map(p => {
+                        const isSelected = selectedPersonsFilter.has(p.person);
+                        return (
+                            <button
+                                key={p.person}
+                                onClick={() => {
+                                    const next = new Set(selectedPersonsFilter);
+                                    if (isSelected) next.delete(p.person);
+                                    else next.add(p.person);
+                                    setSelectedPersonsFilter(next);
+                                }}
+                                className={`flex-shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all ${
+                                    isSelected 
+                                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-[0_0_10px_rgba(79,70,229,0.3)]'
+                                        : 'bg-zinc-900/80 border-zinc-700/80 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                                }`}
+                            >
+                                <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-white/80' : 'bg-zinc-600'}`} />
+                                <span className="text-sm font-medium">{p.person}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {selectedPersonsFilter.size === 0 ? (
+                <div className="flex-1 flex items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950/50">
+                    <div className="text-center py-12 px-4 max-w-md">
+                        <Users className="w-12 h-12 mx-auto mb-4 text-indigo-500/30" />
+                        <h3 className="text-zinc-200 font-semibold mb-2">No Personnel Selected</h3>
+                        <p className="text-sm text-zinc-400">
+                            Select one or more team members above to start forming a squad. The views below will dynamically update to show shared tasks, individual tasks, and blockers for the selected team members.
+                        </p>
+                    </div>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-0">
+                    {/* Left Column: Squad Backlog */}
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4 flex flex-col min-h-0 overflow-hidden" style={{ maxHeight: '70vh' }}>
+                        <div className="flex items-center justify-between mb-4 pb-3 border-b border-zinc-800/50 flex-shrink-0">
+                            <div className="flex items-center gap-2">
+                                <Layers className="w-4 h-4 text-indigo-400" />
+                                <h3 className="font-semibold text-zinc-100">Squad Backlog</h3>
+                            </div>
+                            <Badge variant="outline" className="text-[10px] border-indigo-800/50 text-indigo-300 bg-indigo-950/20">
+                                {sharedBacklog.length + squadMembers.reduce((sum, m) => sum + individualBacklog[m].length, 0)} tasks
+                            </Badge>
+                        </div>
+
+                        <div className="text-[10px] text-zinc-500 mb-3 flex items-center gap-1 flex-shrink-0">
+                            <GripVertical className="w-3 h-3" />
+                            Drag tasks to the Squad Plan to plan them
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-6 pb-8">
+                            {/* Shared Backlog Section */}
+                            {squadMembers.length > 1 && sharedBacklog.length > 0 && (
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2 text-indigo-400 border-b border-indigo-900/30 pb-1">
+                                        <Users className="w-3.5 h-3.5" />
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider">Shared Tasks ({sharedBacklog.length})</h4>
+                                    </div>
+                                    <div className="space-y-1.5 pl-2 border-l border-indigo-900/30">
+                                        {sharedBacklog.map(task => renderCard(task, 'backlog'))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Individual Backlog Sections */}
+                            {squadMembers.map(member => {
+                                const tasks = individualBacklog[member] || [];
+                                if (tasks.length === 0) return null;
+                                return (
+                                    <div key={member} className="space-y-2">
+                                        <div className="flex items-center gap-2 text-zinc-400 border-b border-zinc-800/50 pb-1">
+                                            <User className="w-3.5 h-3.5" />
+                                            <h4 className="text-xs font-semibold uppercase tracking-wider">{member}'s Tasks ({tasks.length})</h4>
+                                        </div>
+                                        <div className="space-y-1.5 pl-2 border-l border-zinc-800/50">
+                                            {tasks.map(task => renderCard(task, 'backlog', member))}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            {sharedBacklog.length === 0 && squadMembers.every(m => individualBacklog[m].length === 0) && (
+                                <div className="text-center py-8 text-zinc-500 text-sm border-t border-zinc-800/30 mt-4">
+                                    No tasks in backlog for the selected personnel.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Right Column: Squad Plan */}
+                    <div 
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        className={`rounded-xl border p-4 flex flex-col min-h-0 overflow-hidden transition-colors ${
+                            dragOverTodo
+                                ? 'border-indigo-500 bg-indigo-950/20 border-dashed'
+                                : 'border-zinc-800 bg-zinc-950/50'
+                        }`}
+                        style={{ maxHeight: '70vh' }}
+                    >
+                        <div className="flex items-center justify-between mb-4 pb-3 border-b border-zinc-800/50 flex-shrink-0">
+                            <div className="flex items-center gap-2">
+                                <Calendar className="w-4 h-4 text-emerald-400" />
+                                <h3 className="font-semibold text-zinc-100">Squad Plan for {isToday(selectedDate) ? "Today" : format(selectedDate, 'MMM d')}</h3>
+                                {squadMembers.some(sm => dailyTodos.getTodosForPersonDate(sm, dateStr).length > 0) && (
+                                    <div className="flex items-center gap-1 ml-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleCopyForDM}
+                                            className="p-1.5 rounded-md hover:bg-zinc-700/80 text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1"
+                                            title="Copy all squad plans for DM"
+                                        >
+                                            {copied ? (
+                                                <span className="text-[10px] text-emerald-400 font-medium px-1">Copied!</span>
+                                            ) : (
+                                                <Copy className="w-3.5 h-3.5" />
+                                            )}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleSendToWebhook}
+                                            disabled={sending}
+                                            className={`p-1.5 rounded-md transition-colors flex items-center gap-1 ${
+                                                sending
+                                                    ? 'bg-indigo-900/50 text-indigo-300 cursor-not-allowed'
+                                                    : sendResult
+                                                        ? sendResult.success
+                                                            ? 'bg-emerald-900/50 text-emerald-300'
+                                                            : 'bg-red-900/50 text-red-300'
+                                                        : 'hover:bg-indigo-700/80 text-indigo-400 hover:text-indigo-200'
+                                            }`}
+                                            title="Send all squad plans to Lark"
+                                        >
+                                            {sending ? (
+                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            ) : sendResult ? (
+                                                <span className={`text-[10px] font-medium px-1 ${sendResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                    {sendResult.message}
+                                                </span>
+                                            ) : (
+                                                <Send className="w-3.5 h-3.5" />
+                                            )}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {dragOverTodo && (
+                            <div className="flex items-center justify-center py-4 mb-3 rounded-lg border-2 border-dashed border-indigo-500/50 bg-indigo-950/30 flex-shrink-0">
+                                <Plus className="w-4 h-4 text-indigo-400 mr-2" />
+                                <span className="text-indigo-300 text-sm">Drop to plan for squad</span>
+                            </div>
+                        )}
+
+                        <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-6 pb-8">
+                             {/* Shared Plans Section */}
+                             {squadMembers.length > 1 && sharedPlans.length > 0 && (
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2 text-indigo-400 border-b border-indigo-900/30 pb-1">
+                                        <Users className="w-3.5 h-3.5" />
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider">Shared Deliverables</h4>
+                                    </div>
+                                    <div className="space-y-1.5 pl-2 border-l border-indigo-900/30">
+                                        {sharedPlans.map(planData => {
+                                            const isCompleted = Array.from(planData.plannedBy).some(sm => {
+                                                const t = dailyTodos.getTodosForPersonDate(sm, dateStr).find(tt => tt.taskId === planData.task.taskId);
+                                                return t?.completedAt;
+                                            });
+                                            return renderCard(planData.task, 'plan', undefined, isCompleted, true, planData);
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Individual Plans Sections */}
+                            {squadMembers.map(member => {
+                                const plans = individualPlans[member] || [];
+                                if (plans.length === 0) return null;
+                                return (
+                                    <div key={member} className="space-y-2">
+                                        <div className="flex items-center gap-2 text-emerald-400 border-b border-emerald-900/30 pb-1">
+                                            <User className="w-3.5 h-3.5" />
+                                            <h4 className="text-xs font-semibold uppercase tracking-wider">{member}'s Plan</h4>
+                                        </div>
+                                        <div className="space-y-1.5 pl-2 border-l border-emerald-900/30">
+                                            {plans.map(p => renderCard(p.task, 'plan', member, !!p.completedAt, false))}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            
+                            {sharedPlans.length === 0 && squadMembers.every(m => individualPlans[m].length === 0) && !dragOverTodo && (
+                                <div className="text-center py-12 text-zinc-500 border-t border-zinc-800/30 mt-4">
+                                    <Calendar className="w-10 h-10 mx-auto mb-3 opacity-30 text-emerald-500" />
+                                    <p className="text-sm">No tasks planned for the squad</p>
+                                    <p className="text-xs mt-1">Drag tasks from the backlog to plan</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export function DailyMeetingView({
     analyses,
     meetingNotes,
@@ -1748,7 +2489,7 @@ export function DailyMeetingView({
 
     const dailyTodos = useDailyTodos();
 
-    const [viewMode, setViewMode] = useState<'single' | 'all'>('single');
+    const [viewMode, setViewMode] = useState<'single' | 'all' | 'squads'>('single');
     const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
     const [selectedDate, setSelectedDate] = useState<Date>(new Date());
     const [showHistory, setShowHistory] = useState(false);
@@ -1823,6 +2564,17 @@ export function DailyMeetingView({
                             <Users className="w-3 h-3" />
                             View All
                         </button>
+                        <button
+                            onClick={() => setViewMode('squads')}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                                viewMode === 'squads'
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'text-zinc-400 hover:text-zinc-200'
+                            }`}
+                        >
+                            <Users className="w-3 h-3" />
+                            Squads
+                        </button>
                     </div>
 
                     {/* Person Selector (only in single mode) */}
@@ -1848,7 +2600,7 @@ export function DailyMeetingView({
                                         className="fixed inset-0 z-10"
                                         onClick={() => setPersonDropdownOpen(false)}
                                     />
-                                    <div className="absolute top-full left-0 mt-1 w-64 max-h-80 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl z-20">
+                                    <div className="absolute top-full left-0 mt-1 w-64 max-h-80 overflow-y-auto custom-scrollbar rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl z-20">
                                         {filteredPersonData.map((p) => (
                                             <button
                                                 key={p.person}
@@ -2068,6 +2820,17 @@ export function DailyMeetingView({
                     highRiskIds={highRiskIds}
                     onTaskClick={onTaskClick}
                     meetingNotes={meetingNotes}
+                />
+            ) : viewMode === 'squads' ? (
+                <SquadsView
+                    analyses={analyses}
+                    categoryFilter={categoryFilter}
+                    highRiskIds={highRiskIds}
+                    onTaskClick={onTaskClick}
+                    meetingNotes={meetingNotes}
+                    dailyTodos={dailyTodos}
+                    selectedDate={selectedDate}
+                    allPersonData={personData}
                 />
             ) : showCompare && currentPersonData ? (
                 <CompareView
