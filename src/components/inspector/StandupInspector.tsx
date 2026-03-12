@@ -24,8 +24,7 @@ import {
     Zap,
 } from 'lucide-react';
 
-// Team leaders always available in "Blocked by" dropdown
-const TEAM_LEADERS = ['Bùi Anh Đức', 'Phạm Đức Toàn'];
+import { useRoles, ROLE_ORDER } from '@/lib/hooks/useRoles';
 
 interface EnhancedInspectorProps {
     segment: TimelineSegment | null;
@@ -75,10 +74,15 @@ export function StandupInspector({
         }
     }, [segment]);
 
+    const { roles } = useRoles();
+
     // Build list of people for the "Blocked by" dropdown
     const assignedPeople = taskAnalysis
         ? [...new Set(taskAnalysis.statusHistory.map((h) => h.person || '').flatMap((p) => p.split(',').map((n) => n.trim())).filter(Boolean))]
         : [];
+
+    const teamLeaders = allPersons.filter(p => roles[p] === 'Team Leader');
+    const otherPeople = allPersons.filter(p => roles[p] !== 'Team Leader' && !assignedPeople.includes(p));
 
     const handleAddOrUpdateMeetingNote = () => {
         if (!segment) return;
@@ -369,16 +373,27 @@ export function StandupInspector({
                                                 <option value="">Select who is blocking...</option>
                                                 {assignedPeople.length > 0 && (
                                                     <optgroup label="Assigned on this task">
-                                                        {assignedPeople.map((p) => (
-                                                            <option key={`assigned-${p}`} value={p}>{p}</option>
+                                                        {assignedPeople.map((p) => {
+                                                            const roleLabel = roles[p] && roles[p] !== 'Other' ? ` (${roles[p]})` : '';
+                                                            return <option key={`assigned-${p}`} value={p}>{p}{roleLabel}</option>;
+                                                        })}
+                                                    </optgroup>
+                                                )}
+                                                {teamLeaders.length > 0 && (
+                                                    <optgroup label="Team Leaders">
+                                                        {teamLeaders.sort().map((p) => (
+                                                            <option key={`leader-${p}`} value={p}>{p}</option>
                                                         ))}
                                                     </optgroup>
                                                 )}
-                                                <optgroup label="Team Leaders">
-                                                    {TEAM_LEADERS.map((leader) => (
-                                                        <option key={`leader-${leader}`} value={leader}>{leader}</option>
-                                                    ))}
-                                                </optgroup>
+                                                {otherPeople.length > 0 && (
+                                                    <optgroup label="Other Team Members">
+                                                        {otherPeople.sort().map((p) => {
+                                                            const roleLabel = roles[p] && roles[p] !== 'Other' ? ` (${roles[p]})` : '';
+                                                            return <option key={`other-${p}`} value={p}>{p}{roleLabel}</option>;
+                                                        })}
+                                                    </optgroup>
+                                                )}
                                             </select>
                                         </div>
 

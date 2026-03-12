@@ -169,4 +169,5 @@ export interface DailyMovementSummary {
     totalNoChange: number;
     topMover: string | null;
     personMovements: PersonDailyMovement[];
+    sharedSquadData?: PersonDailyMovement | null;
 }

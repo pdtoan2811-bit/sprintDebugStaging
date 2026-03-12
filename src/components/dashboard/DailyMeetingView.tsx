@@ -4,6 +4,7 @@ import React, { useMemo, useState, useCallback, DragEvent } from 'react';
 import { TaskAnalysis, MeetingNote, RawLogEvent } from '@/lib/types';
 import { getStatusSeverity, isBottleneckStatus } from '@/lib/workflow-engine';
 import { useDailyTodos, DailyTodoItem } from '@/lib/hooks/useDailyTodos';
+import { useRoles, ROLE_ORDER, ValidRole } from '@/lib/hooks/useRoles';
 import { Badge } from '../ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { format, subDays, isToday, isYesterday } from 'date-fns';
@@ -40,6 +41,7 @@ import {
     UserX,
     Users,
     Zap,
+    Settings,
 } from 'lucide-react';
 
 interface DailyMeetingViewProps {
@@ -261,6 +263,29 @@ function formatStaleHours(ms: number): string {
 }
 
 /** Build DM-friendly text for a person's to-do list */
+function formatCorporateName(name: string): string {
+    const cleanName = name.trim();
+    if (!cleanName) return '';
+    
+    // Remove diacritics
+    const normalized = cleanName
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/Đ/g, "D");
+        
+    const parts = normalized.split(/\s+/);
+    if (parts.length === 1) return parts[0];
+    
+    const lastWord = parts[parts.length - 1];
+    const initials = parts.slice(0, -1).map(p => p[0].toUpperCase()).join('');
+    
+    // Ensure last word is capitalized nicely (e.g. LINH -> Linh, linh -> Linh)
+    const formattedLastWord = lastWord.charAt(0).toUpperCase() + lastWord.slice(1).toLowerCase();
+    
+    return formattedLastWord + initials;
+}
+
 function formatTodoListForDM(
     person: string,
     todos: DailyTodoItem[],
@@ -1956,6 +1981,7 @@ interface SquadsViewProps {
     dailyTodos: ReturnType<typeof useDailyTodos>;
     selectedDate: Date;
     allPersonData: PersonMeetingData[];
+    roles: Record<string, string>;
 }
 
 function SquadsView({
@@ -1967,6 +1993,7 @@ function SquadsView({
     dailyTodos,
     selectedDate,
     allPersonData,
+    roles,
 }: SquadsViewProps) {
     const [selectedPersonsFilter, setSelectedPersonsFilter] = useState<Set<string>>(new Set());
     const [dragOverTodo, setDragOverTodo] = useState(false);
@@ -1975,7 +2002,29 @@ function SquadsView({
     const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
 
-    const squadMembers = Array.from(selectedPersonsFilter);
+    const squadMembers = Array.from(selectedPersonsFilter).sort((a, b) => {
+        const roleA = roles[a] || 'Other';
+        const roleB = roles[b] || 'Other';
+        const indexA = ROLE_ORDER.indexOf(roleA as ValidRole);
+        const indexB = ROLE_ORDER.indexOf(roleB as ValidRole);
+        const posA = indexA === -1 ? 99 : indexA;
+        const posB = indexB === -1 ? 99 : indexB;
+        if (posA !== posB) return posA - posB;
+        return a.localeCompare(b);
+    });
+
+    const sortedAllPersonData = useMemo(() => {
+        return [...allPersonData].sort((a, b) => {
+            const roleA = roles[a.person] || 'Other';
+            const roleB = roles[b.person] || 'Other';
+            const indexA = ROLE_ORDER.indexOf(roleA as ValidRole);
+            const indexB = ROLE_ORDER.indexOf(roleB as ValidRole);
+            const posA = indexA === -1 ? 99 : indexA;
+            const posB = indexB === -1 ? 99 : indexB;
+            if (posA !== posB) return posA - posB;
+            return a.person.localeCompare(b.person);
+        });
+    }, [allPersonData, roles]);
 
     const handleCopyForDM = useCallback(() => {
         const texts = squadMembers.map(member => {
@@ -2234,14 +2283,14 @@ function SquadsView({
                                                 if (isPlanning) dailyTodos.removeTodo(inv, dateStr, task.taskId);
                                                 else dailyTodos.addTodo(inv, dateStr, task.taskId);
                                             }}
-                                            className={`w-5 h-5 flex items-center justify-center rounded text-[8px] font-bold uppercase transition-colors ${
+                                            className={`px-1.5 h-5 min-w-[20px] flex items-center justify-center rounded text-[10px] font-bold transition-colors ${
                                                 isPlanning 
                                                     ? 'bg-indigo-600 text-white' 
-                                                    : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300'
+                                                    : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
                                             }`}
                                             title={isPlanning ? `${inv} planned this` : `Add to ${inv}'s plan`}
                                         >
-                                            {inv.slice(0, 2)}
+                                            {formatCorporateName(inv)}
                                         </button>
                                     );
                                 })}
@@ -2262,7 +2311,7 @@ function SquadsView({
                     <span className="font-semibold text-zinc-200 text-sm">Gradually form your squad</span>
                 </div>
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
-                    {allPersonData.map(p => {
+                    {sortedAllPersonData.map(p => {
                         const isSelected = selectedPersonsFilter.has(p.person);
                         return (
                             <button
@@ -2488,6 +2537,7 @@ export function DailyMeetingView({
     );
 
     const dailyTodos = useDailyTodos();
+    const { roles, updateRole } = useRoles();
 
     const [viewMode, setViewMode] = useState<'single' | 'all' | 'squads'>('single');
     const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
@@ -2495,6 +2545,7 @@ export function DailyMeetingView({
     const [showHistory, setShowHistory] = useState(false);
     const [showCompare, setShowCompare] = useState(false);
     const [personDropdownOpen, setPersonDropdownOpen] = useState(false);
+    const [rolesModalOpen, setRolesModalOpen] = useState(false);
     const [categoryFilter, setCategoryFilter] = useState<Record<CategoryFilterKey, boolean>>(() => ({ ...DEFAULT_CATEGORY_FILTER }));
 
     const filteredPersonData = useMemo(() => {
@@ -2770,6 +2821,14 @@ export function DailyMeetingView({
                             <span className="font-mono">{stats.totalOther}</span>
                         </div>
                     )}
+                    <button
+                        onClick={() => setRolesModalOpen(true)}
+                        className="flex items-center gap-1 px-2 py-1.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300 transition-colors ml-2"
+                        title="Configure Member Roles"
+                    >
+                        <Settings className="w-3 h-3" />
+                        Roles
+                    </button>
                 </div>
             </div>
 
@@ -2831,6 +2890,7 @@ export function DailyMeetingView({
                     dailyTodos={dailyTodos}
                     selectedDate={selectedDate}
                     allPersonData={personData}
+                    roles={roles}
                 />
             ) : showCompare && currentPersonData ? (
                 <CompareView
@@ -2864,6 +2924,43 @@ export function DailyMeetingView({
                     meetingNotes={meetingNotes}
                 />
             ) : null}
+
+            {/* Member Roles Settings Modal */}
+            {rolesModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+                    <div className="w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-xl p-5 shadow-2xl">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-semibold text-zinc-100 flex items-center gap-2">
+                                <Users className="w-5 h-5 text-indigo-400" />
+                                Member Roles Settings
+                            </h3>
+                            <button onClick={() => setRolesModalOpen(false)} className="text-zinc-500 hover:text-zinc-200">
+                                Close
+                            </button>
+                        </div>
+                        <p className="text-xs text-zinc-400 mb-4">
+                            Assign roles to members. This affects sorting in squad views and priority grouping in blocked-by dropdowns.
+                        </p>
+                        <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-2 custom-scrollbar">
+                            {personData.map(p => (
+                                <div key={p.person} className="flex items-center justify-between bg-zinc-900/50 p-2.5 rounded-lg border border-zinc-800/80">
+                                    <span className="text-sm font-medium text-zinc-200">{p.person}</span>
+                                    <select
+                                        value={roles[p.person] || ''}
+                                        onChange={(e) => updateRole(p.person, e.target.value)}
+                                        className="bg-zinc-950 border border-zinc-700 rounded-md px-2 py-1.5 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    >
+                                        <option value="">No Role</option>
+                                        {ROLE_ORDER.filter(r => r !== 'Other').map(role => (
+                                            <option key={role} value={role}>{role}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
