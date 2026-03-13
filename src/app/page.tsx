@@ -109,6 +109,73 @@ export default function Home() {
     };
   }, [activeSprint]);
 
+  // Mirror any "nextSprintDraft" flags coming from the Google Sheet
+  // into the dedicated next-sprint-drafts store (separate JSON file),
+  // without touching the existing db.json. This keeps the draft store
+  // aligned with the *latest* log row for each task.
+  useEffect(() => {
+    if (!rawLogs || rawLogs.length === 0) return;
+
+    // Compute latest log per taskId
+    const latestByTask = new Map<string, RawLogEvent>();
+    for (const log of rawLogs) {
+      const existing = latestByTask.get(log.taskId);
+      if (!existing) {
+        latestByTask.set(log.taskId, log);
+      } else {
+        const existingTime = new Date(existing.timestamp).getTime();
+        const currentTime = new Date(log.timestamp).getTime();
+        if (currentTime > existingTime) {
+          latestByTask.set(log.taskId, log);
+        }
+      }
+    }
+
+    const latestDraftIds = new Set<string>();
+    latestByTask.forEach((log) => {
+      const flag = (log as RawLogEvent).nextSprintDraft;
+      if (flag && flag.toString().trim().toLowerCase() === 'draft') {
+        latestDraftIds.add(log.taskId);
+      }
+    });
+
+    (async () => {
+      try {
+        const res = await fetch('/api/next-sprint-drafts');
+        if (!res.ok) {
+          console.warn('Failed to read next sprint drafts for sync, status:', res.status);
+          return;
+        }
+        const current = (await res.json()) as Record<string, boolean>;
+        const updates: Record<string, boolean> = {};
+
+        // Add / keep all latest draft ids as true
+        latestDraftIds.forEach((taskId) => {
+          if (!current[taskId]) {
+            updates[taskId] = true;
+          }
+        });
+
+        // Any taskId in current store but not in latestDraftIds should be cleared (false)
+        Object.keys(current).forEach((taskId) => {
+          if (!latestDraftIds.has(taskId)) {
+            updates[taskId] = false;
+          }
+        });
+
+        if (Object.keys(updates).length === 0) return;
+
+        await fetch('/api/next-sprint-drafts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates),
+        });
+      } catch (err) {
+        console.error('Failed to sync next sprint drafts', err);
+      }
+    })();
+  }, [rawLogs]);
+
   // ── Workflow Analysis ──────────────────────────────────────────
   const analyses = useMemo(() => analyzeAllTasks(rawLogs, notes), [rawLogs, notes]);
   const personSummaries = useMemo(() => getPersonSummaries(rawLogs, analyses), [rawLogs, analyses]);

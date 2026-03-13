@@ -9,6 +9,11 @@ export interface RawLogEvent {
     person: string;
     module: string;
     screen: string;
+    /**
+     * Optional flag from Google Sheet indicating that this task
+     * has been drafted for the next sprint. Typically the string "draft".
+     */
+    nextSprintDraft?: string | null;
 }
 
 export interface TimelineSegment {

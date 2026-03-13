@@ -104,6 +104,7 @@ Sprints are identified by a sprint number (e.g., Sprint 7, Sprint 8, etc.). Each
 | `person` | Assigned person(s), comma-separated if multiple |
 | `module` | Product module the task belongs to |
 | `screen` | Specific screen/feature within the module |
+| `nextSprintDraft` | Optional flag from the Google Sheet; when set to `"draft"` on the latest row for a task, that task is auto-populated into the Next Sprint planning view |
 
 ---
 

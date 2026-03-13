@@ -1,6 +1,6 @@
 import { RawLogEvent, TimelineSegment, PersonTimeline } from './types';
 
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw14kdWgmQky3W0eFnn-Ov1adtPdmjFV2VLrN1mv-eZVGkxZpl3qw9nNtUD7s3b7II7/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwn11Eu6y7j_6pPrWG9z_koTcNONCmHVQtqbPJ9AJUggNXeSCtA69CvjDQ-d_3hcrvr/exec';
 
 export async function fetchLogs(sprint?: string): Promise<RawLogEvent[]> {
     try {
