@@ -8,6 +8,7 @@ import { StandupInspector } from '@/components/inspector/StandupInspector';
 import { PersonnelOverview } from '@/components/dashboard/PersonnelOverview';
 import { TaskOverview } from '@/components/dashboard/TaskOverview';
 import { SprintStartManager } from '@/components/dashboard/SprintStartManager';
+import { NextSprintView } from '@/components/dashboard/NextSprintView';
 import { DailyMeetingView } from '@/components/dashboard/DailyMeetingView';
 import { DailyRecapView } from '@/components/dashboard/DailyRecapView';
 import { WorkflowLegend } from '@/components/dashboard/WorkflowLegend';
@@ -34,11 +35,12 @@ import {
   RefreshCw,
   Settings,
   Flag,
+  Target,
   UsersRound,
   History,
 } from 'lucide-react';
 
-type ViewTab = 'dailyMeeting' | 'dailyRecap' | 'personnel' | 'tasks' | 'sprintStart';
+type ViewTab = 'dailyMeeting' | 'dailyRecap' | 'personnel' | 'tasks' | 'sprintStart' | 'nextSprint';
 
 export default function Home() {
   const { configs, manualOverride, saveManualOverride, getActiveSprintNumber, refetch: refetchSprintConfig } = useSprintConfig();
@@ -46,6 +48,7 @@ export default function Home() {
   const [data, setData] = useState<PersonTimeline[]>([]);
   const [rawLogs, setRawLogs] = useState<RawLogEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedSegment, setSelectedSegment] = useState<TimelineSegment | null>(null);
   const [activeTab, setActiveTab] = useState<ViewTab>('dailyMeeting');
   const [showSettings, setShowSettings] = useState(false);
@@ -81,6 +84,7 @@ export default function Home() {
     let ignore = false;
     async function loadData() {
       setLoading(true);
+      setErrorMsg(null);
       try {
         const logs = await fetchLogs(activeSprint || undefined);
         if (!ignore) {
@@ -91,6 +95,7 @@ export default function Home() {
       } catch (err) {
         if (!ignore) {
           console.error('Failed to load sprint logs', err);
+          setErrorMsg(err instanceof Error ? err.message : String(err));
         }
       } finally {
         if (!ignore) {
@@ -153,6 +158,7 @@ export default function Home() {
     { key: 'personnel', label: 'Personnel', icon: <LayoutGrid className="w-4 h-4" />, desc: 'Standup-ready view grouped by person' },
     { key: 'tasks', label: 'Tasks', icon: <ListChecks className="w-4 h-4" />, desc: 'Sortable task table with risk analysis' },
     { key: 'sprintStart', label: 'Sprint Start', icon: <Flag className="w-4 h-4" />, desc: 'Auto-detected starting status snapshot with override support' },
+    { key: 'nextSprint', label: 'Next Sprint', icon: <Target className="w-4 h-4" />, desc: 'Plan the next sprint by squad — drag current carry-over tasks into the next sprint plan' },
   ];
 
   return (
@@ -292,6 +298,15 @@ export default function Home() {
                 <div className="w-full h-[400px] flex items-center justify-center border border-zinc-800 rounded-xl bg-zinc-950/50 animate-pulse">
                   <p className="font-mono text-zinc-500 text-sm">Loading Sprint Telemetry...</p>
                 </div>
+              ) : errorMsg ? (
+                <div className="w-full min-h-[400px] flex flex-col items-center justify-center border border-red-800 rounded-xl bg-red-950/20 p-6 text-center">
+                  <AlertTriangle className="w-12 h-12 text-red-500 mb-4" />
+                  <h3 className="font-bold text-red-400 text-lg mb-2">Error loading sprint data</h3>
+                  <p className="font-mono text-red-300 text-sm max-w-2xl whitespace-pre-wrap">{errorMsg}</p>
+                  <button onClick={() => window.location.reload()} className="mt-6 px-4 py-2 bg-red-950 hover:bg-red-900 border border-red-800 rounded-md text-red-200 transition-colors">
+                    Retry
+                  </button>
+                </div>
               ) : (
                 <>
                   {activeTab === 'dailyMeeting' && (() => {
@@ -342,6 +357,17 @@ export default function Home() {
                       onClearOverride={clearOverride}
                       onClearAllOverrides={clearAllOverrides}
                       onConfirmAll={confirmAllAsOverrides}
+                    />
+                  )}
+                  {activeTab === 'nextSprint' && (
+                    <NextSprintView
+                      analyses={analyses}
+                      meetingNotes={notes}
+                      rawLogs={rawLogs}
+                      highRiskIds={highRiskIds}
+                      onTaskClick={handleTaskClick}
+                      sprintConfigs={configs}
+                      activeSprint={activeSprint || ''}
                     />
                   )}
                 </>
