@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useMemo, useState, DragEvent } from 'react';
+import React, { useMemo, useState, useCallback, DragEvent } from 'react';
 import { TaskAnalysis, RawLogEvent } from '@/lib/types';
 import { useNextSprintPlan, DraftTask } from '@/lib/hooks/useNextSprintPlan';
+import { fetchLogs } from '@/lib/api';
 import { getStatusSeverity, isBottleneckStatus } from '@/lib/workflow-engine';
 import {
     Calendar,
@@ -19,9 +20,40 @@ import {
     User,
     Layers,
     GripVertical,
-    CheckCircle2
+    CheckCircle2,
+    XCircle,
+    Clock,
+    RefreshCw,
+    ShieldCheck
 } from 'lucide-react';
 import { Badge } from '../ui/badge';
+
+type SyncTaskStatus = 'pending' | 'sending' | 'success' | 'failed';
+type VerifyStatus = 'idle' | 'verifying' | 'done';
+
+interface SyncTaskResult {
+    taskId: string;
+    taskName: string;
+    status: SyncTaskStatus;
+    error?: string;
+}
+
+interface VerificationResult {
+    taskId: string;
+    taskName: string;
+    matched: boolean;
+    detail: string;
+}
+
+interface SyncProgress {
+    total: number;
+    completed: number;
+    currentTaskId: string | null;
+    results: SyncTaskResult[];
+    phase: 'sending' | 'verifying' | 'done';
+    verifyStatus: VerifyStatus;
+    verificationResults: VerificationResult[];
+}
 
 interface NextSprintPlanningViewProps {
     analyses: Record<string, TaskAnalysis>;
@@ -80,8 +112,8 @@ export function NextSprintPlanningView({
     const [bulkTargetStatus, setBulkTargetStatus] = useState<string>('');
     const [bulkTargetSprintGoal, setBulkTargetSprintGoal] = useState<string>('');
     
-    const [sending, setSending] = useState(false);
-    const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
+    const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+    const isSyncing = syncProgress !== null && syncProgress.phase !== 'done';
 
     // Get all uncompleted tasks and all unique persons
     const { allPersons, allUncompletedTasks } = useMemo(() => {
@@ -191,53 +223,167 @@ export function NextSprintPlanningView({
         }
     };
 
-    const handleSendToWebhook = async () => {
+    const SYNC_DELAY_MS = 1500;
+
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const handleSendToWebhook = useCallback(async () => {
         if (squadDrafts.length === 0 || squadMembers.length === 0) return;
-        setSending(true);
-        setSendResult(null);
 
-        // Send using the first squad member's webhook setup as a proxy for the squad
-        const primaryPerson = squadMembers[0]; 
+        const initialResults: SyncTaskResult[] = squadDrafts.map(d => {
+            const task = analyses[d.taskId];
+            return {
+                taskId: d.taskId,
+                taskName: task ? task.taskName : 'Unknown',
+                status: 'pending' as SyncTaskStatus,
+            };
+        });
 
-        const payload = {
-            person: primaryPerson,
-            eventType: "bulk_sprint_planning",
-            currentSprint: activeSprint,
-            targetSprint: bulkTargetSprint,
-            squadMembers,
-            plannedTasks: squadDrafts.map(d => {
-                const task = analyses[d.taskId];
-                return {
-                    taskId: d.taskId,
-                    taskName: task ? task.taskName : 'Unknown',
-                    recordLink: task ? task.recordLink : '',
-                    targetStatus: d.targetStatus,
-                    targetSprintGoal: d.targetSprintGoal
+        setSyncProgress({
+            total: squadDrafts.length,
+            completed: 0,
+            currentTaskId: null,
+            results: initialResults,
+            phase: 'sending',
+            verifyStatus: 'idle',
+            verificationResults: [],
+        });
+
+        const updatedResults = [...initialResults];
+        let completedCount = 0;
+
+        // ── Sequential per-task sending ──
+        for (let i = 0; i < squadDrafts.length; i++) {
+            const draft = squadDrafts[i];
+            const task = analyses[draft.taskId];
+
+            // Mark current task as sending
+            updatedResults[i] = { ...updatedResults[i], status: 'sending' };
+            setSyncProgress(prev => prev ? {
+                ...prev,
+                currentTaskId: draft.taskId,
+                results: [...updatedResults],
+            } : prev);
+
+            const payload = {
+                person: task ? task.currentPerson : squadMembers[0],
+                eventType: 'sprint_planning_task',
+                currentSprint: activeSprint,
+                targetSprint: draft.targetSprint,
+                squadMembers,
+                taskId: draft.taskId,
+                taskName: task ? task.taskName : 'Unknown',
+                recordLink: task ? task.recordLink : '',
+                targetStatus: draft.targetStatus,
+                targetSprintGoal: draft.targetSprintGoal,
+            };
+
+            try {
+                const res = await fetch('/api/send-todo-webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || `HTTP error ${res.status}`);
+                }
+
+                updatedResults[i] = { ...updatedResults[i], status: 'success' };
+            } catch (error) {
+                updatedResults[i] = {
+                    ...updatedResults[i],
+                    status: 'failed',
+                    error: error instanceof Error ? error.message : 'Unknown error',
                 };
-            })
-        };
-
-        try {
-            const res = await fetch('/api/send-todo-webhook', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || `HTTP error ${res.status}`);
             }
 
-            setSendResult({ success: true, message: 'Squad Plan Sent!' });
-        } catch (error) {
-            console.error('Webhook sync failed:', error);
-            setSendResult({ success: false, message: error instanceof Error ? error.message : 'Unknown error' });
-        } finally {
-            setSending(false);
-            setTimeout(() => setSendResult(null), 3000);
+            completedCount++;
+            setSyncProgress(prev => prev ? {
+                ...prev,
+                completed: completedCount,
+                results: [...updatedResults],
+            } : prev);
+
+            // Wait between tasks (skip delay after the last one)
+            if (i < squadDrafts.length - 1) {
+                await sleep(SYNC_DELAY_MS);
+            }
         }
-    };
+
+        // ── Verification phase: re-fetch from Google Sheet ──
+        setSyncProgress(prev => prev ? {
+            ...prev,
+            phase: 'verifying',
+            verifyStatus: 'verifying',
+            currentTaskId: null,
+        } : prev);
+
+        let verificationResults: VerificationResult[] = [];
+        try {
+            // Small delay to let the Lark automation propagate
+            await sleep(2000);
+            const freshLogs = await fetchLogs(activeSprint || undefined);
+
+            // Build a map of the latest status per task from the fresh data
+            const freshTaskMap = new Map<string, RawLogEvent>();
+            freshLogs.forEach(log => {
+                const existing = freshTaskMap.get(log.taskId);
+                if (!existing || new Date(log.timestamp) > new Date(existing.timestamp)) {
+                    freshTaskMap.set(log.taskId, log);
+                }
+            });
+
+            verificationResults = squadDrafts.map(draft => {
+                const task = analyses[draft.taskId];
+                const freshLog = freshTaskMap.get(draft.taskId);
+                const taskName = task ? task.taskName : 'Unknown';
+
+                if (!freshLog) {
+                    return {
+                        taskId: draft.taskId,
+                        taskName,
+                        matched: false,
+                        detail: 'Task not found in Google Sheet data',
+                    };
+                }
+
+                // Check if the sheet reflects the target values
+                const checks: string[] = [];
+                if (freshLog.sprint !== draft.targetSprint) {
+                    checks.push(`Sprint: sheet="${freshLog.sprint}" vs planned="${draft.targetSprint}"`);
+                }
+                if (freshLog.status !== draft.targetStatus) {
+                    checks.push(`Status: sheet="${freshLog.status}" vs planned="${draft.targetStatus}"`);
+                }
+                if (draft.targetSprintGoal && freshLog.sprintGoal !== draft.targetSprintGoal) {
+                    checks.push(`Goal: sheet="${freshLog.sprintGoal}" vs planned="${draft.targetSprintGoal}"`);
+                }
+
+                if (checks.length === 0) {
+                    return { taskId: draft.taskId, taskName, matched: true, detail: 'All fields match' };
+                } else {
+                    return { taskId: draft.taskId, taskName, matched: false, detail: checks.join(' · ') };
+                }
+            });
+        } catch (error) {
+            console.error('Verification fetch failed:', error);
+            verificationResults = squadDrafts.map(d => ({
+                taskId: d.taskId,
+                taskName: analyses[d.taskId]?.taskName || 'Unknown',
+                matched: false,
+                detail: 'Verification fetch failed — could not reach Google Sheet',
+            }));
+        }
+
+        setSyncProgress(prev => prev ? {
+            ...prev,
+            phase: 'done',
+            verifyStatus: 'done',
+            verificationResults,
+        } : prev);
+    }, [squadDrafts, squadMembers, analyses, activeSprint, bulkTargetSprint]);
 
     if (isLoading) {
         return (
@@ -441,23 +587,131 @@ export function NextSprintPlanningView({
                             
                             <button
                                 onClick={handleSendToWebhook}
-                                disabled={squadDrafts.length === 0 || sending}
+                                disabled={squadDrafts.length === 0 || isSyncing}
                                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:border-zinc-700 text-white text-xs font-bold rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:shadow-none transition-all flex items-center gap-2 active:scale-95 border border-emerald-400/50"
                             >
-                                {sending ? (
+                                {isSyncing ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : sendResult?.success ? (
+                                ) : syncProgress?.phase === 'done' ? (
                                     <CheckCircle2 className="w-4 h-4 text-white" />
                                 ) : (
                                     <Send className="w-4 h-4" />
                                 )}
-                                {sendResult?.success ? 'Confirmed & Sent!' : 'Confirm & Sync Squad'}
+                                {isSyncing
+                                    ? `Syncing ${syncProgress?.completed ?? 0}/${syncProgress?.total ?? 0}...`
+                                    : syncProgress?.phase === 'done'
+                                        ? 'Sync Complete — Resync?'
+                                        : 'Confirm & Sync Squad'}
                             </button>
                         </div>
-                        
-                        {sendResult && !sendResult.success && (
-                            <div className="mb-4 p-3 bg-red-950/40 border border-red-900/60 text-red-400 text-xs rounded-lg font-mono">
-                                Error: {sendResult.message}
+
+                        {/* ── Sync Progress Panel ── */}
+                        {syncProgress && (
+                            <div className="mb-4 p-4 bg-zinc-950/80 border border-zinc-700/60 rounded-xl space-y-4 shadow-inner">
+                                {/* Progress bar */}
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold">
+                                        <span className="text-zinc-400 flex items-center gap-1.5">
+                                            {syncProgress.phase === 'sending' && <><Loader2 className="w-3 h-3 animate-spin text-emerald-400" /> Sending tasks to Lark…</>}
+                                            {syncProgress.phase === 'verifying' && <><RefreshCw className="w-3 h-3 animate-spin text-blue-400" /> Verifying with Google Sheet…</>}
+                                            {syncProgress.phase === 'done' && <><ShieldCheck className="w-3 h-3 text-emerald-400" /> Sync Complete</>}
+                                        </span>
+                                        <span className="text-zinc-500 font-mono">
+                                            {syncProgress.completed}/{syncProgress.total}
+                                        </span>
+                                    </div>
+                                    <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden">
+                                        <div
+                                            className="h-full rounded-full transition-all duration-500 ease-out"
+                                            style={{
+                                                width: `${syncProgress.total > 0 ? (syncProgress.completed / syncProgress.total) * 100 : 0}%`,
+                                                background: syncProgress.phase === 'done'
+                                                    ? 'linear-gradient(90deg, #10b981, #34d399)'
+                                                    : 'linear-gradient(90deg, #6366f1, #818cf8)',
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Per-task status list */}
+                                <div className="space-y-1.5 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
+                                    {syncProgress.results.map(r => (
+                                        <div
+                                            key={r.taskId}
+                                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                                                r.status === 'sending'
+                                                    ? 'bg-indigo-950/40 border border-indigo-800/40'
+                                                    : r.status === 'success'
+                                                        ? 'bg-emerald-950/20 border border-emerald-900/30'
+                                                        : r.status === 'failed'
+                                                            ? 'bg-red-950/30 border border-red-900/40'
+                                                            : 'bg-zinc-900/50 border border-zinc-800/30'
+                                            }`}
+                                        >
+                                            {r.status === 'pending' && <Clock className="w-3 h-3 text-zinc-500 shrink-0" />}
+                                            {r.status === 'sending' && <Loader2 className="w-3 h-3 text-indigo-400 animate-spin shrink-0" />}
+                                            {r.status === 'success' && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
+                                            {r.status === 'failed' && <XCircle className="w-3 h-3 text-red-400 shrink-0" />}
+                                            <span className="font-mono text-zinc-500 shrink-0">{r.taskId}</span>
+                                            <span className="text-zinc-300 truncate">{r.taskName}</span>
+                                            {r.error && (
+                                                <span className="ml-auto text-red-400 text-[10px] font-mono shrink-0 truncate max-w-[150px]" title={r.error}>
+                                                    {r.error}
+                                                </span>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Verification results */}
+                                {syncProgress.phase === 'done' && syncProgress.verificationResults.length > 0 && (
+                                    <div className="pt-3 border-t border-zinc-800 space-y-2">
+                                        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-semibold text-zinc-400">
+                                            <ShieldCheck className="w-3 h-3 text-blue-400" />
+                                            Google Sheet Verification
+                                        </div>
+                                        <div className="space-y-1.5 max-h-[180px] overflow-y-auto custom-scrollbar pr-1">
+                                            {syncProgress.verificationResults.map(v => (
+                                                <div
+                                                    key={v.taskId}
+                                                    className={`flex items-start gap-2 px-3 py-2 rounded-lg text-xs border ${
+                                                        v.matched
+                                                            ? 'bg-emerald-950/20 border-emerald-900/30'
+                                                            : 'bg-amber-950/20 border-amber-900/30'
+                                                    }`}
+                                                >
+                                                    {v.matched
+                                                        ? <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
+                                                        : <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />}
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="font-mono text-zinc-500">{v.taskId}</span>
+                                                            <span className="text-zinc-300 truncate">{v.taskName}</span>
+                                                        </div>
+                                                        <div className={`text-[10px] mt-0.5 ${v.matched ? 'text-emerald-400/80' : 'text-amber-400/80'} font-mono`}>
+                                                            {v.detail}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <p className="text-[10px] text-zinc-600 italic">
+                                            ⚠️ Mismatches may be normal if Lark automation hasn't propagated to the Google Sheet yet.
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Close/dismiss button when done */}
+                                {syncProgress.phase === 'done' && (
+                                    <div className="flex justify-end">
+                                        <button
+                                            onClick={() => setSyncProgress(null)}
+                                            className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 rounded hover:bg-zinc-800/50"
+                                        >
+                                            Dismiss
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
