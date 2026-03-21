@@ -485,8 +485,13 @@ export function NextSprintPlanningView({
                                         <option value="Not Started">Not Started</option>
                                         <option value="In Process">In Process</option>
                                         <option value="Reviewing">Reviewing</option>
-                                        <option value="Bug Fixing">Bug Fixing</option>
+                                        <option value="Waiting to Integrate">Waiting to Integrate</option>
+                                        <option value="Ready for Test">Ready for Test</option>
                                         <option value="Testing">Testing</option>
+                                        <option value="Reprocess">Reprocess</option>
+                                        <option value="Bug Fixing">Bug Fixing</option>
+                                        <option value="Staging Passed">Staging Passed</option>
+                                        <option value="Completed">Completed</option>
                                     </select>
                                 </div>
                                 <div className="space-y-1 flex-1">
@@ -499,11 +504,12 @@ export function NextSprintPlanningView({
                                         <option value="">Keep Existing</option>
                                         <option value="Not Started">Not Started</option>
                                         <option value="In Process">In Process</option>
+                                        <option value="Waiting to Integrate">Waiting to Integrate</option>
                                         <option value="Reviewing">Reviewing</option>
-                                        <option value="Bug Fixing">Bug Fixing</option>
+                                        <option value="Ready for Test">Ready for Test</option>
                                         <option value="Testing">Testing</option>
                                         <option value="Reprocess">Reprocess</option>
-                                        <option value="Waiting to Integrate">Waiting to Integrate</option>
+                                        <option value="Bug Fixing">Bug Fixing</option>
                                         <option value="Staging Passed">Staging Passed</option>
                                         <option value="Completed">Completed</option>
                                     </select>
@@ -574,9 +580,14 @@ export function NextSprintPlanningView({
                                                     >
                                                         <option value="Not Started">Not Started</option>
                                                         <option value="In Process">In Process</option>
+                                                        <option value="Waiting to Integrate">Waiting to Integrate</option>
                                                         <option value="Reviewing">Reviewing</option>
-                                                        <option value="Bug Fixing">Bug Fixing</option>
+                                                        <option value="Ready for Test">Ready for Test</option>
                                                         <option value="Testing">Testing</option>
+                                                        <option value="Reprocess">Reprocess</option>
+                                                        <option value="Bug Fixing">Bug Fixing</option>
+                                                        <option value="Staging Passed">Staging Passed</option>
+                                                        <option value="Completed">Completed</option>
                                                     </select>
                                                 </div>
                                                 <div className="col-span-2 space-y-1.5">
@@ -589,11 +600,12 @@ export function NextSprintPlanningView({
                                                         <option value="">(Empty / Ignore)</option>
                                                         <option value="Not Started">Not Started</option>
                                                         <option value="In Process">In Process</option>
+                                                        <option value="Waiting to Integrate">Waiting to Integrate</option>
                                                         <option value="Reviewing">Reviewing</option>
-                                                        <option value="Bug Fixing">Bug Fixing</option>
+                                                        <option value="Ready for Test">Ready for Test</option>
                                                         <option value="Testing">Testing</option>
                                                         <option value="Reprocess">Reprocess</option>
-                                                        <option value="Waiting to Integrate">Waiting to Integrate</option>
+                                                        <option value="Bug Fixing">Bug Fixing</option>
                                                         <option value="Staging Passed">Staging Passed</option>
                                                         <option value="Completed">Completed</option>
                                                     </select>
