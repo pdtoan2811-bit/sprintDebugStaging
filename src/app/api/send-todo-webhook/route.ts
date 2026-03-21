@@ -41,19 +41,21 @@ export async function POST(req: NextRequest) {
     try {
         const payload = await req.json();
         const person = payload?.person as string | undefined;
+        let webhookUrl = payload?.webhookUrl as string | undefined;
 
-        if (!person) {
-            return NextResponse.json(
-                { success: false, error: 'Missing person in payload' },
-                { status: 400 }
-            );
+        if (!webhookUrl) {
+            if (!person) {
+                return NextResponse.json(
+                    { success: false, error: 'Missing person or webhookUrl in payload' },
+                    { status: 400 }
+                );
+            }
+            webhookUrl = (await getPersonWebhookUrl(person)) ?? undefined;
         }
-
-        const webhookUrl = await getPersonWebhookUrl(person);
 
         if (!webhookUrl) {
             return NextResponse.json(
-                { success: false, error: `No webhook configured for person: ${person}` },
+                { success: false, error: person ? `No webhook configured for person: ${person}` : 'No webhookUrl provided' },
                 { status: 400 }
             );
         }

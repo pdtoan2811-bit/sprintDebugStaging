@@ -1,4 +1,5 @@
 import { RawLogEvent, TimelineSegment, PersonTimeline } from './types';
+import { hasMetSprintGoal } from './utils';
 
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw14kdWgmQky3W0eFnn-Ov1adtPdmjFV2VLrN1mv-eZVGkxZpl3qw9nNtUD7s3b7II7/exec';
 
@@ -61,7 +62,7 @@ export function transformLogsToSegments(logs: RawLogEvent[]): PersonTimeline[] {
 
             // Determine if the task is completely finished across all its logs
             const latestLog = taskLogs[taskLogs.length - 1];
-            const isCompleted = latestLog.status === latestLog.sprintGoal;
+            const isCompleted = hasMetSprintGoal(latestLog.status, latestLog.sprintGoal);
 
             // If there's no next log, this is the active current state
             const isActive = !nextLog && !isCompleted;

@@ -432,7 +432,7 @@ function SquadSharedTasksTable({ rows, onTaskClick }: SquadSharedTasksTableProps
                 <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p>No shared squad tasks for this day.</p>
                 <p className="text-sm mt-1">
-                    We only list tasks that at least two selected people touched today.
+                    We only list tasks that all selected people touched today.
                 </p>
             </div>
         );
@@ -446,7 +446,7 @@ function SquadSharedTasksTable({ rows, onTaskClick }: SquadSharedTasksTableProps
                         Today&apos;s shared squad tasks
                     </h2>
                     <p className="text-[11px] text-zinc-500">
-                        Each row is a task that at least two selected people worked on today.
+                        Each row is a task that all selected people worked on today.
                     </p>
                 </div>
                 <Badge className="bg-indigo-950/40 border-indigo-700/60 text-indigo-200 text-[10px] px-2 py-1">
@@ -624,7 +624,7 @@ export function DailyRecapView({ rawLogs, sprintStartDate, onTaskClick }: DailyR
             });
         });
 
-        const sharedTaskIds = Object.keys(taskPersonCounts).filter((taskId: string) => taskPersonCounts[taskId].size > 1);
+        const sharedTaskIds = Object.keys(taskPersonCounts).filter((taskId: string) => taskPersonCounts[taskId].size === selectedPersonsFilter.size);
         
         const sharedSquadData: PersonDailyMovement | null = sharedTaskIds.length > 0 && selectedPersonsFilter.size > 1 ? {
             person: 'Shared Squad Progress',
@@ -979,7 +979,7 @@ export function DailyRecapView({ rawLogs, sprintStartDate, onTaskClick }: DailyR
                         });
 
                         const sharedTodoTaskIds = Array.from(todoTaskMap.entries())
-                            .filter(([_, persons]) => persons.size >= 2)
+                            .filter(([_, persons]) => persons.size >= selectedPersonsFilter.size)
                             .map(([taskId]) => taskId);
 
                         if (sharedTodoTaskIds.length === 0) {
@@ -990,7 +990,7 @@ export function DailyRecapView({ rawLogs, sprintStartDate, onTaskClick }: DailyR
                                         No shared to-do items for this squad today
                                     </p>
                                     <p className="text-sm mt-1 text-zinc-500">
-                                        Pick at least two people above. We&apos;ll list tasks that appear on both of their to-do lists for {getDateLabel()}.
+                                        Pick at least two people above. We&apos;ll list tasks that appear on all of their to-do lists for {getDateLabel()}.
                                     </p>
                                 </div>
                             );
@@ -1037,7 +1037,7 @@ export function DailyRecapView({ rawLogs, sprintStartDate, onTaskClick }: DailyR
 
                         const rows = sharedTodoTaskIds.map(taskId => {
                             const movement = movementByTaskId.get(taskId) ?? buildFallbackMovement(taskId);
-                            const people = Array.from(todoTaskMap.get(taskId) ?? new Set());
+                            const people: string[] = Array.from(todoTaskMap.get(taskId) ?? new Set<string>());
                             return { movement, people };
                         });
 

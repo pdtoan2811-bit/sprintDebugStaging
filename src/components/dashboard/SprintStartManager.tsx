@@ -20,7 +20,10 @@ import {
     Search,
     Square,
     User,
+    CloudSync,
 } from 'lucide-react';
+import { useSprintStartSync } from '@/lib/hooks/useSprintStartSync';
+import { SprintStartSyncModal } from './SprintStartSyncModal';
 
 interface SprintStartManagerProps {
     rawLogs: RawLogEvent[];
@@ -54,6 +57,18 @@ export function SprintStartManager({
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
     const [showBulkMenu, setShowBulkMenu] = useState(false);
     const [localEntries, setLocalEntries] = useState<SprintStartEntry[]>([]);
+    const [showSyncModal, setShowSyncModal] = useState(false);
+
+    const { 
+        isSyncing, 
+        current, 
+        total, 
+        logs, 
+        syncToLark, 
+        resetSync 
+    } = useSprintStartSync();
+
+    const syncStatus = { isSyncing, current, total, logs };
 
     const snapshotEntries = useMemo(() => {
         if (!selectedSprint || rawLogs.length === 0) return [];
@@ -107,6 +122,11 @@ export function SprintStartManager({
     const handleConfirmAll = useCallback(() => {
         onConfirmAll(selectedSprint, localEntries);
     }, [selectedSprint, localEntries, onConfirmAll]);
+
+    const handleSyncToLark = useCallback(() => {
+        setShowSyncModal(true);
+        syncToLark(selectedSprint, localEntries);
+    }, [selectedSprint, localEntries, syncToLark]);
 
     const handleClearAllOverrides = useCallback(() => {
         if (confirm('Reset all overrides to auto-detected values?')) {
@@ -246,6 +266,13 @@ export function SprintStartManager({
                             Reset All
                         </button>
                     )}
+                    <button
+                        onClick={handleSyncToLark}
+                        className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-md transition-colors shadow-lg shadow-indigo-900/30"
+                    >
+                        <CloudSync className="w-3.5 h-3.5" />
+                        Sync to Lark
+                    </button>
                     <button
                         onClick={handleConfirmAll}
                         className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-md transition-colors shadow-lg shadow-blue-900/30"
@@ -557,6 +584,14 @@ export function SprintStartManager({
                     <span>Showing: <span className="text-zinc-300 font-mono">{filteredAndSortedEntries.length}</span></span>
                 </div>
             )}
+
+            {/* Sync Progress Modal */}
+            <SprintStartSyncModal
+                isOpen={showSyncModal}
+                onClose={() => setShowSyncModal(false)}
+                syncStatus={syncStatus}
+                sprint={selectedSprint}
+            />
         </div>
     );
 }

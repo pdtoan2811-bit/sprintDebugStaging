@@ -3,6 +3,7 @@
 import React, { useMemo, useState, useCallback, DragEvent } from 'react';
 import { TaskAnalysis, MeetingNote, RawLogEvent } from '@/lib/types';
 import { getStatusSeverity, isBottleneckStatus } from '@/lib/workflow-engine';
+import { hasMetSprintGoal } from '@/lib/utils';
 import { useDailyTodos, DailyTodoItem } from '@/lib/hooks/useDailyTodos';
 import { useRoles, ROLE_ORDER, ValidRole } from '@/lib/hooks/useRoles';
 import { Badge } from '../ui/badge';
@@ -42,7 +43,9 @@ import {
     Users,
     Zap,
     Settings,
+    Shield,
 } from 'lucide-react';
+import { WebhookSettingsModal } from './WebhookSettingsModal';
 
 interface DailyMeetingViewProps {
     analyses: Record<string, TaskAnalysis>;
@@ -50,6 +53,7 @@ interface DailyMeetingViewProps {
     rawLogs: RawLogEvent[];
     sprintStartSnapshot: Record<string, string>;
     highRiskIds: Set<string>;
+    activeSprint: string;
     onTaskClick: (taskId: string) => void;
 }
 
@@ -349,10 +353,14 @@ interface TodoWebhookItem {
     blockedBy: string | null;
     /** Which people are being blocked BY this person (attached at item level for Lark) */
     blockingTargets: string[];
+    /** Is the task moved to next sprint? */
+    isMoved?: boolean;
 }
 
 interface TodoWebhookPayload {
     person: string;
+    currentSprint?: string;
+    nextSprint?: string;
     date: string;
     todos: (TodoWebhookItem | null)[];
     summary: {
@@ -369,7 +377,8 @@ function formatTodoListForWebhook(
     todos: DailyTodoItem[],
     analyses: Record<string, TaskAnalysis>,
     meetingNotes: Record<string, MeetingNote[]>,
-    allPersonData: PersonMeetingData[]
+    allPersonData: PersonMeetingData[],
+    activeSprint?: string
 ): TodoWebhookPayload {
     const blockingOthers = new Set<string>();
     allPersonData.forEach((pd) => {
@@ -409,6 +418,7 @@ function formatTodoListForWebhook(
             recordLink: task.recordLink || '',
             blockedBy,
             blockingTargets,
+            isMoved: task.isMovedToNextSprint,
         };
 
         return item;
@@ -426,8 +436,12 @@ function formatTodoListForWebhook(
         return todoItems[idx] ?? null;
     });
 
+    const nextSprintNum = activeSprint ? (parseInt(activeSprint) + 1) : null;
+
     return {
         person,
+        currentSprint: activeSprint || undefined,
+        nextSprint: nextSprintNum ? String(nextSprintNum) : undefined,
         date,
         todos: paddedTodos,
         summary,
@@ -667,14 +681,14 @@ function DraggableTaskCard({
             )}
             {showSprintGoal && task.sprintGoal && (
                 <div className="mt-2 pt-2 border-t border-zinc-800/50">
-                    <div className={`flex items-center gap-1 text-[9px] ${task.currentStatus === task.sprintGoal ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                        {task.currentStatus === task.sprintGoal ? (
+                    <div className={`flex items-center gap-1 text-[9px] ${hasMetSprintGoal(task.currentStatus, task.sprintGoal) ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                        {hasMetSprintGoal(task.currentStatus, task.sprintGoal) ? (
                             <CheckCircle2 className="w-2.5 h-2.5 text-emerald-500" />
                         ) : (
                             <Target className="w-2.5 h-2.5" />
                         )}
                         <span className="truncate">{task.sprintGoal}</span>
-                        {task.currentStatus === task.sprintGoal && (
+                        {hasMetSprintGoal(task.currentStatus, task.sprintGoal) && (
                             <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-emerald-950/50 text-emerald-300 font-semibold">MET</span>
                         )}
                     </div>
@@ -786,6 +800,7 @@ interface PersonSingleViewProps {
     sprintStartSnapshot: Record<string, string>;
     allPersonData: PersonMeetingData[];
     meetingNotes: Record<string, MeetingNote[]>;
+    activeSprint: string;
 }
 
 function PersonSingleView({
@@ -800,6 +815,7 @@ function PersonSingleView({
     sprintStartSnapshot,
     allPersonData,
     meetingNotes,
+    activeSprint
 }: PersonSingleViewProps) {
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
     const todosForDate = dailyTodos.getTodosForPersonDate(personData.person, dateStr);
@@ -830,7 +846,8 @@ function PersonSingleView({
             todosForDate,
             analyses,
             meetingNotes,
-            allPersonData
+            allPersonData,
+            activeSprint
         );
         
         const result = await sendTodoListToWebhook(payload);
@@ -1238,14 +1255,14 @@ function HistoricalView({
                                         <div className="flex items-center gap-2 mt-1 ml-5">
                                             {statusBadge(task.currentStatus)}
                                             {task.sprintGoal && (
-                                                <span className={`text-[9px] flex items-center gap-1 ${task.currentStatus === task.sprintGoal ? 'text-emerald-400' : 'text-zinc-600'}`}>
-                                                    {task.currentStatus === task.sprintGoal ? (
+                                                <span className={`text-[9px] flex items-center gap-1 ${hasMetSprintGoal(task.currentStatus, task.sprintGoal) ? 'text-emerald-400' : 'text-zinc-600'}`}>
+                                                    {hasMetSprintGoal(task.currentStatus, task.sprintGoal) ? (
                                                         <CheckCircle2 className="w-2.5 h-2.5 text-emerald-500" />
                                                     ) : (
                                                         <Target className="w-2 h-2" />
                                                     )}
                                                     {task.sprintGoal}
-                                                    {task.currentStatus === task.sprintGoal && (
+                                                    {hasMetSprintGoal(task.currentStatus, task.sprintGoal) && (
                                                         <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-emerald-950/50 text-emerald-300 font-semibold">MET</span>
                                                     )}
                                                 </span>
@@ -2087,8 +2104,8 @@ function SquadsView({
     }, [sending, squadMembers, dateStr, dailyTodos, analyses, meetingNotes, allPersonData]);
 
     // Compute derived tasks for Backlog
-    const { sharedBacklog, individualBacklog } = useMemo(() => {
-        const shared: TaskAnalysis[] = [];
+    const { combinationBacklogs, individualBacklog } = useMemo(() => {
+        const combinations = new Map<string, TaskAnalysis[]>();
         const individual: Record<string, TaskAnalysis[]> = {};
         squadMembers.forEach(sm => individual[sm] = []);
 
@@ -2105,8 +2122,11 @@ function SquadsView({
         });
 
         uniqueTasks.forEach(task => {
-            const assignees = task.currentPerson ? task.currentPerson.split(',').map(p => p.trim()) : [];
-            const involved = squadMembers.filter(sm => assignees.includes(sm));
+            // Robustly determine which squad members are involved with this task
+            const involved = squadMembers.filter(sm => {
+                const data = allPersonData.find(p => p.person === sm);
+                return data?.allTasks.some(t => t.taskId === task.taskId);
+            });
             
             // Check if fully planned by all involved squad members
             const isFullyPlanned = involved.length > 0 && involved.every(sm => {
@@ -2117,24 +2137,43 @@ function SquadsView({
             if (isFullyPlanned) return; // Skip if fully planned
 
             if (involved.length > 1) {
-                shared.push(task);
+                involved.sort((a, b) => a.localeCompare(b));
+                const key = involved.join('|');
+                if (!combinations.has(key)) combinations.set(key, []);
+                combinations.get(key)!.push(task);
             } else if (involved.length === 1) {
-                individual[involved[0]].push(task);
+                if (!individual[involved[0]].some(t => t.taskId === task.taskId)) {
+                    individual[involved[0]].push(task);
+                }
             }
         });
 
-        // Sort them for consistent viewing
-        shared.sort((a, b) => b.staleDurationMs - a.staleDurationMs);
+        const combinationArray = Array.from(combinations.entries()).map(([key, tasks]) => {
+            tasks.sort((a, b) => b.staleDurationMs - a.staleDurationMs);
+            return {
+                involvedList: key.split('|'),
+                tasks
+            };
+        });
+
+        // Sort combinations: largest groups first, then alphabetically
+        combinationArray.sort((a, b) => {
+            if (a.involvedList.length !== b.involvedList.length) {
+                return b.involvedList.length - a.involvedList.length;
+            }
+            return a.involvedList.join(',').localeCompare(b.involvedList.join(','));
+        });
+
         Object.keys(individual).forEach(key => {
             individual[key].sort((a, b) => b.staleDurationMs - a.staleDurationMs);
         });
 
-        return { sharedBacklog: shared, individualBacklog: individual };
+        return { combinationBacklogs: combinationArray, individualBacklog: individual };
     }, [allPersonData, squadMembers, categoryFilter, dailyTodos, dateStr]);
 
     // Compute derived tasks for Squad Plan
-    const { sharedPlans, individualPlans } = useMemo(() => {
-        const shared = new Map<string, { task: TaskAnalysis, plannedBy: Set<string>, involved: string[] }>();
+    const { combinationPlans, individualPlans } = useMemo(() => {
+        const combinations = new Map<string, { task: TaskAnalysis, plannedBy: Set<string>, involved: string[] }>();
         const individual: Record<string, { task: TaskAnalysis, completedAt?: string }[]> = {};
         squadMembers.forEach(sm => individual[sm] = []);
 
@@ -2144,20 +2183,22 @@ function SquadsView({
                 const task = analyses[todo.taskId];
                 if (!task) return;
 
-                const assignees = task.currentPerson ? task.currentPerson.split(',').map(p => p.trim()) : [];
-                const involved = squadMembers.filter(m => assignees.includes(m));
+                // Robustly check who in the squad has this planned
+                const involved = squadMembers.filter(m => {
+                    const personTodos = dailyTodos.getTodosForPersonDate(m, dateStr);
+                    return personTodos.some(t => t.taskId === task.taskId);
+                });
 
                 if (involved.length > 1) {
-                    if (!shared.has(task.taskId)) {
-                        shared.set(task.taskId, { task, plannedBy: new Set([sm]), involved });
+                    involved.sort((a, b) => a.localeCompare(b));
+                    const key = involved.join('|');
+                    const compKey = `${key}-${task.taskId}`;
+                    if (!combinations.has(compKey)) {
+                        combinations.set(compKey, { task, plannedBy: new Set([sm]), involved });
                     } else {
-                        shared.get(task.taskId)!.plannedBy.add(sm);
+                        combinations.get(compKey)!.plannedBy.add(sm);
                     }
                 } else if (involved.length === 1) {
-                    if (!individual[sm].some(t => t.task.taskId === task.taskId)) {
-                        individual[sm].push({ task, completedAt: todo.completedAt });
-                    }
-                } else {
                     if (!individual[sm].some(t => t.task.taskId === task.taskId)) {
                         individual[sm].push({ task, completedAt: todo.completedAt });
                     }
@@ -2165,7 +2206,30 @@ function SquadsView({
             });
         });
 
-        return { sharedPlans: Array.from(shared.values()), individualPlans: individual };
+        // Group combinations together by involved members
+        const groupedMap = new Map<string, { task: TaskAnalysis, plannedBy: Set<string>, involved: string[] }[]>();
+        
+        combinations.forEach((data) => {
+            const key = data.involved.join('|');
+            if (!groupedMap.has(key)) groupedMap.set(key, []);
+            groupedMap.get(key)!.push(data);
+        });
+
+        const combinationArray = Array.from(groupedMap.entries()).map(([key, items]) => {
+            return {
+                involvedList: key.split('|'),
+                items
+            };
+        });
+
+        combinationArray.sort((a, b) => {
+            if (a.involvedList.length !== b.involvedList.length) {
+                return b.involvedList.length - a.involvedList.length;
+            }
+            return a.involvedList.join(',').localeCompare(b.involvedList.join(','));
+        });
+
+        return { combinationPlans: combinationArray, individualPlans: individual };
     }, [squadMembers, dailyTodos, dateStr, analyses]);
 
     const handleDragStart = (e: DragEvent, taskId: string) => {
@@ -2356,7 +2420,7 @@ function SquadsView({
                                 <h3 className="font-semibold text-zinc-100">Squad Backlog</h3>
                             </div>
                             <Badge variant="outline" className="text-[10px] border-indigo-800/50 text-indigo-300 bg-indigo-950/20">
-                                {sharedBacklog.length + squadMembers.reduce((sum, m) => sum + individualBacklog[m].length, 0)} tasks
+                                {combinationBacklogs.reduce((sum, g) => sum + g.tasks.length, 0) + squadMembers.reduce((sum, m) => sum + individualBacklog[m].length, 0)} tasks
                             </Badge>
                         </div>
 
@@ -2366,18 +2430,22 @@ function SquadsView({
                         </div>
 
                         <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-6 pb-8">
-                            {/* Shared Backlog Section */}
-                            {squadMembers.length > 1 && sharedBacklog.length > 0 && (
-                                <div className="space-y-2">
+                            {/* Combination Backlog Sections */}
+                            {combinationBacklogs.map(group => (
+                                <div key={group.involvedList.join('|')} className="space-y-2">
                                     <div className="flex items-center gap-2 text-indigo-400 border-b border-indigo-900/30 pb-1">
                                         <Users className="w-3.5 h-3.5" />
-                                        <h4 className="text-xs font-semibold uppercase tracking-wider">Shared Tasks ({sharedBacklog.length})</h4>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider">
+                                            {group.involvedList.length === squadMembers.length 
+                                                ? `Shared by Squad (${group.tasks.length})`
+                                                : `Shared: ${group.involvedList.join(', ')} (${group.tasks.length})`}
+                                        </h4>
                                     </div>
                                     <div className="space-y-1.5 pl-2 border-l border-indigo-900/30">
-                                        {sharedBacklog.map(task => renderCard(task, 'backlog'))}
+                                        {group.tasks.map(task => renderCard(task, 'backlog'))}
                                     </div>
                                 </div>
-                            )}
+                            ))}
 
                             {/* Individual Backlog Sections */}
                             {squadMembers.map(member => {
@@ -2396,7 +2464,7 @@ function SquadsView({
                                 );
                             })}
 
-                            {sharedBacklog.length === 0 && squadMembers.every(m => individualBacklog[m].length === 0) && (
+                            {combinationBacklogs.length === 0 && squadMembers.every(m => individualBacklog[m].length === 0) && (
                                 <div className="text-center py-8 text-zinc-500 text-sm border-t border-zinc-800/30 mt-4">
                                     No tasks in backlog for the selected personnel.
                                 </div>
@@ -2472,15 +2540,19 @@ function SquadsView({
                         )}
 
                         <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-6 pb-8">
-                             {/* Shared Plans Section */}
-                             {squadMembers.length > 1 && sharedPlans.length > 0 && (
-                                <div className="space-y-2">
+                            {/* Combination Plans Sections */}
+                             {combinationPlans.map(group => (
+                                <div key={group.involvedList.join('|')} className="space-y-2">
                                     <div className="flex items-center gap-2 text-indigo-400 border-b border-indigo-900/30 pb-1">
                                         <Users className="w-3.5 h-3.5" />
-                                        <h4 className="text-xs font-semibold uppercase tracking-wider">Shared Deliverables</h4>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider">
+                                            {group.involvedList.length === squadMembers.length 
+                                                ? `Squad Deliverables`
+                                                : `Shared: ${group.involvedList.join(', ')}`}
+                                        </h4>
                                     </div>
                                     <div className="space-y-1.5 pl-2 border-l border-indigo-900/30">
-                                        {sharedPlans.map(planData => {
+                                        {group.items.map(planData => {
                                             const isCompleted = Array.from(planData.plannedBy).some(sm => {
                                                 const t = dailyTodos.getTodosForPersonDate(sm, dateStr).find(tt => tt.taskId === planData.task.taskId);
                                                 return t?.completedAt;
@@ -2489,7 +2561,7 @@ function SquadsView({
                                         })}
                                     </div>
                                 </div>
-                            )}
+                            ))}
 
                             {/* Individual Plans Sections */}
                             {squadMembers.map(member => {
@@ -2508,7 +2580,7 @@ function SquadsView({
                                 );
                             })}
                             
-                            {sharedPlans.length === 0 && squadMembers.every(m => individualPlans[m].length === 0) && !dragOverTodo && (
+                            {combinationPlans.length === 0 && squadMembers.every(m => individualPlans[m].length === 0) && !dragOverTodo && (
                                 <div className="text-center py-12 text-zinc-500 border-t border-zinc-800/30 mt-4">
                                     <Calendar className="w-10 h-10 mx-auto mb-3 opacity-30 text-emerald-500" />
                                     <p className="text-sm">No tasks planned for the squad</p>
@@ -2529,6 +2601,7 @@ export function DailyMeetingView({
     rawLogs,
     sprintStartSnapshot,
     highRiskIds,
+    activeSprint,
     onTaskClick,
 }: DailyMeetingViewProps) {
     const personData = useMemo(
@@ -2546,6 +2619,7 @@ export function DailyMeetingView({
     const [showCompare, setShowCompare] = useState(false);
     const [personDropdownOpen, setPersonDropdownOpen] = useState(false);
     const [rolesModalOpen, setRolesModalOpen] = useState(false);
+    const [webhooksModalOpen, setWebhooksModalOpen] = useState(false);
     const [categoryFilter, setCategoryFilter] = useState<Record<CategoryFilterKey, boolean>>(() => ({ ...DEFAULT_CATEGORY_FILTER }));
 
     const filteredPersonData = useMemo(() => {
@@ -2829,6 +2903,14 @@ export function DailyMeetingView({
                         <Settings className="w-3 h-3" />
                         Roles
                     </button>
+                    <button
+                        onClick={() => setWebhooksModalOpen(true)}
+                        className="flex items-center gap-1 px-2 py-1.5 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300 transition-colors ml-1"
+                        title="Configure Lark Webhooks"
+                    >
+                        <Send className="w-3 h-3" />
+                        Webhooks
+                    </button>
                 </div>
             </div>
 
@@ -2922,6 +3004,7 @@ export function DailyMeetingView({
                     sprintStartSnapshot={sprintStartSnapshot}
                     allPersonData={personData}
                     meetingNotes={meetingNotes}
+                    activeSprint={activeSprint}
                 />
             ) : null}
 
@@ -2961,6 +3044,13 @@ export function DailyMeetingView({
                     </div>
                 </div>
             )}
+
+            <WebhookSettingsModal
+                isOpen={webhooksModalOpen}
+                onClose={() => setWebhooksModalOpen(false)}
+                persons={personData.map(p => p.person)}
+                initialPerson={selectedPerson}
+            />
         </div>
     );
 }

@@ -61,6 +61,7 @@ export function StandupInspector({
     const [meetingStallReason, setMeetingStallReason] = useState('');
     const [meetingBlockedBy, setMeetingBlockedBy] = useState('');
     const [meetingSolution, setMeetingSolution] = useState('');
+    const [meetingIsMovedToNextSprint, setMeetingIsMovedToNextSprint] = useState(false);
 
     useEffect(() => {
         if (segment) {
@@ -71,6 +72,7 @@ export function StandupInspector({
             setMeetingStallReason('');
             setMeetingBlockedBy('');
             setMeetingSolution('');
+            setMeetingIsMovedToNextSprint(false);
         }
     }, [segment]);
 
@@ -94,6 +96,7 @@ export function StandupInspector({
             stallReason: meetingIsStall ? meetingStallReason : '',
             blockedBy: meetingIsStall ? meetingBlockedBy : '',
             solution: meetingSolution,
+            isMovedToNextSprint: meetingIsMovedToNextSprint,
             createdAt: new Date().toISOString(),
         };
 
@@ -109,6 +112,7 @@ export function StandupInspector({
         setMeetingStallReason('');
         setMeetingBlockedBy('');
         setMeetingSolution('');
+        setMeetingIsMovedToNextSprint(false);
         setShowMeetingForm(false);
     };
 
@@ -118,6 +122,7 @@ export function StandupInspector({
         setMeetingStallReason(note.stallReason || '');
         setMeetingBlockedBy(note.blockedBy || '');
         setMeetingSolution(note.solution || '');
+        setMeetingIsMovedToNextSprint(note.isMovedToNextSprint || false);
         setShowMeetingForm(true);
     };
 
@@ -194,6 +199,25 @@ export function StandupInspector({
                         </div>
                         {isHighRisk ? (
                             <ToggleRight className="w-5 h-5 text-red-400" />
+                        ) : (
+                            <ToggleLeft className="w-5 h-5 text-zinc-600" />
+                        )}
+                    </button>
+
+                    {/* ── Move to Next Sprint Toggle ── */}
+                    <button
+                        onClick={() => setMeetingIsMovedToNextSprint(!meetingIsMovedToNextSprint)}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition-all ${meetingIsMovedToNextSprint
+                            ? 'border-blue-600/50 bg-blue-950/30 text-blue-300'
+                            : 'border-zinc-800 bg-zinc-900/50 text-zinc-400'
+                            }`}
+                    >
+                        <div className="flex items-center gap-2">
+                            <RefreshCw className={`w-3.5 h-3.5 ${meetingIsMovedToNextSprint ? 'text-blue-400 animate-spin' : ''}`} style={{ animationDuration: '4s' }} />
+                            <span className="text-xs font-semibold uppercase tracking-wide italic">Move to Next Sprint</span>
+                        </div>
+                        {meetingIsMovedToNextSprint ? (
+                            <ToggleRight className="w-5 h-5 text-blue-400" />
                         ) : (
                             <ToggleLeft className="w-5 h-5 text-zinc-600" />
                         )}

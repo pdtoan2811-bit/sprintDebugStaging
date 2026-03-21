@@ -5,10 +5,15 @@ cd "$DIR"
 
 echo "🚀 Starting Sprint Debugger..."
 
-# Check if node_modules exists, if not install dependencies
 if [ ! -d "node_modules" ]; then
     echo "📦 Installing dependencies (first time setup)..."
     npm install
+fi
+
+# Remove Next.js cache to prevent hydration issues
+if [ -d ".next" ]; then
+    echo "🧹 Clearing Next.js cache..."
+    rm -rf ".next"
 fi
 
 # Open the browser in the background

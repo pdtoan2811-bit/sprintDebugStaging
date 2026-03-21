@@ -10,10 +10,10 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr :3000 ^| findstr LISTENING') 
     taskkill /F /PID %%a >nul 2>&1
 )
 
-REM Remove stale Next.js lock file
-if exist ".next\dev\lock" (
-    echo Removing stale lock file...
-    del /f /q ".next\dev\lock" >nul 2>&1
+REM Remove Next.js cache to prevent hydration issues
+if exist ".next" (
+    echo Clearing Next.js cache...
+    rmdir /s /q ".next" >nul 2>&1
 )
 
 timeout /t 2 /nobreak >nul

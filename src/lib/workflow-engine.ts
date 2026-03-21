@@ -9,6 +9,7 @@ import {
     MeetingNote,
 } from './types';
 import { calculateWorkingDuration } from './date-utils';
+import { hasMetSprintGoal } from './utils';
 
 // ── Status Helpers ────────────────────────────────────────────────
 
@@ -142,11 +143,13 @@ export function analyzeTask(taskLogs: RawLogEvent[], taskNotes: MeetingNote[] = 
     // Staleness
     const lastChangeTime = new Date(latest.timestamp).getTime();
     const timeSinceLastChange = Date.now() - lastChangeTime;
-    const isCompleted = latest.status === 'Completed' || latest.status === 'Staging Passed';
+    const isCompleted = hasMetSprintGoal(latest.status, latest.sprintGoal)
+        || latest.status === 'Completed' || latest.status === 'Staging Passed';
     const isStale = !isCompleted && timeSinceLastChange > STALE_THRESHOLD_MS;
 
     const latestNote = [...taskNotes].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
     const blockedBy = latestNote?.isStall && latestNote.blockedBy ? latestNote.blockedBy : undefined;
+    const isMovedToNextSprint = latestNote?.isMovedToNextSprint;
 
     return {
         taskId: latest.taskId,
@@ -165,6 +168,7 @@ export function analyzeTask(taskLogs: RawLogEvent[], taskNotes: MeetingNote[] = 
         sprintGoal: latest.sprintGoal,
         recordLink: latest.recordLink,
         blockedBy,
+        isMovedToNextSprint,
     };
 }
 

@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { TaskAnalysis } from '@/lib/types';
 import { isBottleneckStatus, getStatusSeverity } from '@/lib/workflow-engine';
+import { hasMetSprintGoal } from '@/lib/utils';
 import { Badge } from '../ui/badge';
 import {
     AlertTriangle,
@@ -64,8 +65,8 @@ export function TaskOverview({ analyses, highRiskIds, onTaskClick }: TaskOvervie
                     cmp = aBlocked - bBlocked || (a.blockedBy ?? '').localeCompare(b.blockedBy ?? '');
                     break;
                 case 'goal':
-                    const aMetGoal = a.sprintGoal && a.currentStatus === a.sprintGoal ? 1 : 0;
-                    const bMetGoal = b.sprintGoal && b.currentStatus === b.sprintGoal ? 1 : 0;
+                    const aMetGoal = hasMetSprintGoal(a.currentStatus, a.sprintGoal) ? 1 : 0;
+                    const bMetGoal = hasMetSprintGoal(b.currentStatus, b.sprintGoal) ? 1 : 0;
                     cmp = aMetGoal - bMetGoal;
                     break;
             }
@@ -98,7 +99,7 @@ export function TaskOverview({ analyses, highRiskIds, onTaskClick }: TaskOvervie
         const total = tasks.length;
         const highRisk = tasks.filter(t => highRiskIds.has(t.taskId)).length;
         const stale = tasks.filter(t => t.isStale).length;
-        const metGoal = tasks.filter(t => t.sprintGoal && t.currentStatus === t.sprintGoal).length;
+        const metGoal = tasks.filter(t => hasMetSprintGoal(t.currentStatus, t.sprintGoal)).length;
         const blocked = tasks.filter(t => t.blockedBy).length;
         return { total, highRisk, stale, metGoal, blocked };
     }, [tasks, highRiskIds]);
@@ -163,7 +164,7 @@ export function TaskOverview({ analyses, highRiskIds, onTaskClick }: TaskOvervie
                                 const isHR = highRiskIds.has(task.taskId);
                                 const severity = getStatusSeverity(task.currentStatus);
                                 const isBottleneck = isBottleneckStatus(task.currentStatus);
-                                const metGoal = task.sprintGoal && task.currentStatus === task.sprintGoal;
+                                const metGoal = hasMetSprintGoal(task.currentStatus, task.sprintGoal);
 
                                 return (
                                     <tr

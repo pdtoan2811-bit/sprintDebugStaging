@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { PersonTimeline, TimelineSegment, RawLogEvent, MeetingNote } from '@/lib/types';
 import { fetchLogs, transformLogsToSegments } from '@/lib/api';
 import { analyzeAllTasks, getPersonSummaries } from '@/lib/workflow-engine';
@@ -10,6 +11,7 @@ import { TaskOverview } from '@/components/dashboard/TaskOverview';
 import { SprintStartManager } from '@/components/dashboard/SprintStartManager';
 import { DailyMeetingView } from '@/components/dashboard/DailyMeetingView';
 import { DailyRecapView } from '@/components/dashboard/DailyRecapView';
+import { NextSprintPlanningView } from '@/components/dashboard/NextSprintPlanningView';
 import { WorkflowLegend } from '@/components/dashboard/WorkflowLegend';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +22,7 @@ import { useSprintStart } from '@/lib/hooks/useSprintStart';
 import { format } from 'date-fns';
 import { useSprintConfig } from '@/lib/hooks/useSprintConfig';
 import { SprintSettings } from '@/components/inspector/SprintSettings';
+import { WebhookSettingsModal } from '@/components/dashboard/WebhookSettingsModal';
 import { DataManagementModal } from '@/components/dashboard/DataManagementModal';
 import { usePersonWebhooks } from '@/lib/hooks/usePersonWebhooks';
 import {
@@ -36,9 +39,12 @@ import {
   Flag,
   UsersRound,
   History,
+  Code,
+  Play,
+  Target,
 } from 'lucide-react';
 
-type ViewTab = 'dailyMeeting' | 'dailyRecap' | 'personnel' | 'tasks' | 'sprintStart';
+type ViewTab = 'dailyMeeting' | 'nextSprintPlanning' | 'dailyRecap' | 'personnel' | 'tasks' | 'sprintStart' | 'sandbox';
 
 export default function Home() {
   const { configs, manualOverride, saveManualOverride, getActiveSprintNumber, refetch: refetchSprintConfig } = useSprintConfig();
@@ -149,10 +155,12 @@ export default function Home() {
   // ── Tab definitions ────────────────────────────────────────────
   const tabs: { key: ViewTab; label: string; icon: React.ReactNode; desc: string }[] = [
     { key: 'dailyMeeting', label: 'Daily Meeting', icon: <UsersRound className="w-4 h-4" />, desc: 'Prioritized view for daily standups: Doing → Blocking → Blocked → Not Started' },
+    { key: 'nextSprintPlanning', label: 'Next Sprint Planning', icon: <Target className="w-4 h-4" />, desc: 'Draft and bulk sync tasks to the next sprint' },
     { key: 'dailyRecap', label: 'Daily Recap', icon: <History className="w-4 h-4" />, desc: 'Retrospective view: task movements per person for a selected day (default: yesterday)' },
     { key: 'personnel', label: 'Personnel', icon: <LayoutGrid className="w-4 h-4" />, desc: 'Standup-ready view grouped by person' },
     { key: 'tasks', label: 'Tasks', icon: <ListChecks className="w-4 h-4" />, desc: 'Sortable task table with risk analysis' },
     { key: 'sprintStart', label: 'Sprint Start', icon: <Flag className="w-4 h-4" />, desc: 'Auto-detected starting status snapshot with override support' },
+    { key: 'sandbox', label: 'Sandbox', icon: <Code className="w-4 h-4" />, desc: 'Test sprint movement and Lark integrations in isolation' },
   ];
 
   return (
@@ -160,14 +168,23 @@ export default function Home() {
 
       {/* ── Header ─────────────────────────────────────────── */}
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-zinc-900 pb-6">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-zinc-50 flex items-center gap-2">
-            <Activity className="w-8 h-8 text-blue-500" />
-            Sprint Relay<span className="text-zinc-500 font-light">Debugger</span>
-          </h1>
-          <p className="text-zinc-500 text-sm mt-1 max-w-lg">
-            Workflow-aware diagnostics — bottleneck detection, doom loop tracking, and PM decision support.
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="flex flex-col">
+            <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+              <Activity className="w-8 h-8 text-blue-500" />
+              Sprint Relay Debugger
+              <Link
+                href="/sandbox"
+                className="ml-4 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black rounded-full shadow-lg shadow-indigo-600/30 transition-all active:scale-95 border border-indigo-400/30 flex items-center gap-1.5"
+              >
+                <Code className="w-3 h-3" />
+                SANDBOX TEST
+              </Link>
+            </h1>
+            <p className="text-zinc-500 text-sm max-w-xl">
+              Workflow-aware diagnostics &mdash; bottleneck detection, doom loop tracking, and PM decision support.
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
@@ -308,9 +325,18 @@ export default function Home() {
                         sprintStartSnapshot={snapshotMap}
                         highRiskIds={highRiskIds}
                         onTaskClick={handleTaskClick}
+                        activeSprint={activeSprint || ''}
                       />
                     );
                   })()}
+                  {activeTab === 'nextSprintPlanning' && (
+                    <NextSprintPlanningView
+                      analyses={analyses}
+                      rawLogs={rawLogs}
+                      activeSprint={activeSprint || ''}
+                      onTaskClick={handleTaskClick}
+                    />
+                  )}
                   {activeTab === 'dailyRecap' && (
                     <DailyRecapView
                       rawLogs={rawLogs}
@@ -332,19 +358,39 @@ export default function Home() {
                       onTaskClick={handleTaskClick}
                     />
                   )}
-                  {activeTab === 'sprintStart' && (
-                    <SprintStartManager
-                      rawLogs={rawLogs}
-                      selectedSprint={activeSprint || ''}
-                      getSprintStartSnapshot={getSprintStartSnapshot}
-                      onSaveOverride={saveOverride}
-                      onBulkSaveOverrides={bulkSaveOverrides}
-                      onClearOverride={clearOverride}
-                      onClearAllOverrides={clearAllOverrides}
-                      onConfirmAll={confirmAllAsOverrides}
-                    />
-                  )}
-                </>
+                    {activeTab === 'sprintStart' && (
+                      <SprintStartManager
+                        rawLogs={rawLogs}
+                        selectedSprint={activeSprint || ''}
+                        getSprintStartSnapshot={getSprintStartSnapshot}
+                        onSaveOverride={saveOverride}
+                        onBulkSaveOverrides={bulkSaveOverrides}
+                        onClearOverride={clearOverride}
+                        onClearAllOverrides={clearAllOverrides}
+                        onConfirmAll={confirmAllAsOverrides}
+                      />
+                    )}
+                    {activeTab === 'sandbox' && (() => {
+                      // Inline sandbox logic or just a message. 
+                      // For now, let's just make it a link but prominently.
+                      return (
+                        <div className="flex flex-col items-center justify-center py-20 bg-zinc-950/30 border border-dashed border-zinc-800 rounded-xl">
+                          <Code className="w-12 h-12 mb-4 text-indigo-400 opacity-50" />
+                          <h3 className="text-xl font-bold text-zinc-100 mb-2">Sprint Movement Sandbox</h3>
+                          <p className="text-zinc-500 text-sm mb-6 text-center max-w-md">
+                            The sandbox environment is located on a dedicated page to ensure focused testing without dashboard complexity.
+                          </p>
+                          <Link 
+                            href="/sandbox"
+                            className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-lg shadow-indigo-600/20 active:scale-95 flex items-center gap-2"
+                          >
+                            <Play className="w-4 h-4" />
+                            Launch Sandbox
+                          </Link>
+                        </div>
+                      );
+                    })()}
+                  </>
               )}
             </CardContent>
           </Card>
@@ -364,57 +410,13 @@ export default function Home() {
         </div>
       </main>
 
-      {/* Webhook Settings Overlay */}
-      {showWebhookSettings && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70">
-          <div className="w-full max-w-xl rounded-xl bg-zinc-950 border border-zinc-800 p-5 shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-purple-400" />
-                <span className="font-semibold text-sm text-zinc-100">Webhook Settings per Member</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowWebhookSettings(false)}
-                className="text-zinc-500 hover:text-zinc-200 text-xs px-2 py-1 rounded-md hover:bg-zinc-800 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-            {allPersons.length === 0 ? (
-              <p className="text-xs text-zinc-500">
-                No members detected yet. Webhooks will appear once sprint data is loaded.
-              </p>
-            ) : (
-              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-                {allPersons.map((person) => {
-                  const current = webhookMap[person] ?? '';
-                  return (
-                    <div key={person} className="flex flex-col gap-1 border border-zinc-800/60 rounded-lg p-3 bg-zinc-900/50">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-zinc-100">{person}</span>
-                        <span className="text-[10px] text-zinc-500">
-                          {current ? 'Webhook configured' : 'No webhook set'}
-                        </span>
-                      </div>
-                      <input
-                        type="text"
-                        defaultValue={current}
-                        onBlur={(e) => {
-                          const value = e.target.value.trim();
-                          setWebhookForPerson(person, value || null);
-                        }}
-                        placeholder="https://... (Lark webhook URL for this person)"
-                        className="w-full bg-zinc-950 border border-zinc-700 rounded-md px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-purple-500"
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Webhook Settings Modal */}
+      <WebhookSettingsModal
+        isOpen={showWebhookSettings}
+        onClose={() => setShowWebhookSettings(false)}
+        persons={allPersons}
+        activeSprint={activeSprint || ''}
+      />
 
       <footer className="w-full text-center text-zinc-600 text-xs font-mono py-4 border-t border-zinc-900 mt-auto">
         Sprint Relay Engine v2.0.0 &middot; Workflow Anatomy Enabled

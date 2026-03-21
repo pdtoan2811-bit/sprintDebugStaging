@@ -91,6 +91,7 @@ export interface TaskAnalysis {
     sprintGoal: string;
     recordLink: string;
     blockedBy?: string;
+    isMovedToNextSprint?: boolean;
 }
 
 export interface InterrogationLogEntry {
@@ -108,6 +109,7 @@ export interface MeetingNote {
     stallReason: string;
     blockedBy: string;   // person name
     solution: string;
+    isMovedToNextSprint?: boolean;
     createdAt: string;   // ISO timestamp
 }
 
