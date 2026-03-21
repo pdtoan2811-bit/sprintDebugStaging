@@ -1,66 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
 
-// We reuse the same db.json that /api/data uses so webhooks are centrally stored.
-const DATA_FILE_PATH = path.join(process.cwd(), 'data', 'db.json');
-const WEBHOOK_KEY = 'sprint_relay_person_webhooks';
-
-async function getPersonWebhookUrl(person: string): Promise<string | null> {
-    try {
-        const file = await fs.readFile(DATA_FILE_PATH, 'utf-8');
-        const data = JSON.parse(file);
-        const raw = data?.[WEBHOOK_KEY];
-
-        if (!raw) return null;
-
-        let map: Record<string, string> | null = null;
-
-        if (typeof raw === 'string') {
-            try {
-                const parsed = JSON.parse(raw);
-                if (parsed && typeof parsed === 'object') {
-                    map = parsed as Record<string, string>;
-                }
-            } catch {
-                map = null;
-            }
-        } else if (typeof raw === 'object') {
-            map = raw as Record<string, string>;
-        }
-
-        if (!map) return null;
-
-        return map[person] ?? null;
-    } catch {
-        return null;
-    }
-}
+const GLOBAL_WEBHOOK_URL = 'https://jsg35lsl9g0c.sg.larksuite.com/base/automation/webhook/event/CyknaO0BCwAPxZhhaItlNTN0gEg';
 
 export async function POST(req: NextRequest) {
     try {
         const payload = await req.json();
-        const person = payload?.person as string | undefined;
-        let webhookUrl = payload?.webhookUrl as string | undefined;
 
-        if (!webhookUrl) {
-            if (!person) {
-                return NextResponse.json(
-                    { success: false, error: 'Missing person or webhookUrl in payload' },
-                    { status: 400 }
-                );
-            }
-            webhookUrl = (await getPersonWebhookUrl(person)) ?? undefined;
-        }
-
-        if (!webhookUrl) {
-            return NextResponse.json(
-                { success: false, error: person ? `No webhook configured for person: ${person}` : 'No webhookUrl provided' },
-                { status: 400 }
-            );
-        }
-
-        const res = await fetch(webhookUrl, {
+        const res = await fetch(GLOBAL_WEBHOOK_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -77,7 +23,7 @@ export async function POST(req: NextRequest) {
                     statusText: res.statusText,
                     body: text,
                 },
-                { status: 500 }
+                { status: res.status }
             );
         }
 
@@ -101,4 +47,3 @@ export async function POST(req: NextRequest) {
         );
     }
 }
-

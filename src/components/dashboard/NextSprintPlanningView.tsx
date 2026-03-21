@@ -77,7 +77,8 @@ export function NextSprintPlanningView({
     
     // Bulk Edit States
     const [bulkTargetSprint, setBulkTargetSprint] = useState<string>(activeSprint ? String(parseInt(activeSprint) + 1) : '');
-    const [bulkTargetStatus, setBulkTargetStatus] = useState<string>('Not Started');
+    const [bulkTargetStatus, setBulkTargetStatus] = useState<string>('');
+    const [bulkTargetSprintGoal, setBulkTargetSprintGoal] = useState<string>('');
     
     const [sending, setSending] = useState(false);
     const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -166,11 +167,12 @@ export function NextSprintPlanningView({
         setDragOverPlan(false);
         const taskId = e.dataTransfer.getData('text/plain');
         if (taskId && analyses[taskId]) {
+            const task = analyses[taskId];
             addDraft({
                 taskId,
                 targetSprint: bulkTargetSprint,
-                targetStatus: bulkTargetStatus,
-                targetSprintGoal: ''
+                targetStatus: task.currentStatus,
+                targetSprintGoal: task.sprintGoal || ''
             });
         }
     };
@@ -178,7 +180,14 @@ export function NextSprintPlanningView({
     const handleApplyBulkEdits = () => {
         const squadTaskIds = squadDrafts.map(d => d.taskId);
         if (squadTaskIds.length > 0) {
-            bulkUpdateDrafts({ targetSprint: bulkTargetSprint, targetStatus: bulkTargetStatus }, squadTaskIds);
+            const updates: Partial<DraftTask> = {};
+            if (bulkTargetSprint) updates.targetSprint = bulkTargetSprint;
+            if (bulkTargetStatus) updates.targetStatus = bulkTargetStatus;
+            if (bulkTargetSprintGoal !== '') updates.targetSprintGoal = bulkTargetSprintGoal;
+            
+            if (Object.keys(updates).length > 0) {
+                bulkUpdateDrafts(updates, squadTaskIds);
+            }
         }
     };
 
@@ -201,6 +210,7 @@ export function NextSprintPlanningView({
                 return {
                     taskId: d.taskId,
                     taskName: task ? task.taskName : 'Unknown',
+                    recordLink: task ? task.recordLink : '',
                     targetStatus: d.targetStatus,
                     targetSprintGoal: d.targetSprintGoal
                 };
@@ -284,8 +294,8 @@ export function NextSprintPlanningView({
                         onClick={() => addDraft({
                             taskId: task.taskId,
                             targetSprint: bulkTargetSprint,
-                            targetStatus: bulkTargetStatus,
-                            targetSprintGoal: ''
+                            targetStatus: task.currentStatus,
+                            targetSprintGoal: task.sprintGoal || ''
                         })}
                         className="opacity-0 group-hover:opacity-100 px-2 py-1.5 rounded bg-indigo-900/40 text-indigo-300 hover:bg-indigo-600 hover:text-white text-[10px] font-semibold transition-all flex items-center border border-indigo-500/30 hover:border-indigo-500 shrink-0"
                     >
@@ -471,11 +481,31 @@ export function NextSprintPlanningView({
                                         onChange={e => setBulkTargetStatus(e.target.value)}
                                         className="w-full sm:max-w-[160px] bg-zinc-950 border border-zinc-700 text-xs text-zinc-200 px-2 py-1.5 rounded focus:border-emerald-500 focus:outline-none transition-colors"
                                     >
+                                        <option value="">Keep Existing</option>
                                         <option value="Not Started">Not Started</option>
                                         <option value="In Process">In Process</option>
                                         <option value="Reviewing">Reviewing</option>
                                         <option value="Bug Fixing">Bug Fixing</option>
                                         <option value="Testing">Testing</option>
+                                    </select>
+                                </div>
+                                <div className="space-y-1 flex-1">
+                                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold block">Bulk Set Sprint Goal</label>
+                                    <select 
+                                        value={bulkTargetSprintGoal}
+                                        onChange={e => setBulkTargetSprintGoal(e.target.value)}
+                                        className="w-full sm:max-w-[160px] bg-zinc-950 border border-zinc-700 text-xs text-zinc-200 px-2 py-1.5 rounded focus:border-emerald-500 focus:outline-none transition-colors"
+                                    >
+                                        <option value="">Keep Existing</option>
+                                        <option value="Not Started">Not Started</option>
+                                        <option value="In Process">In Process</option>
+                                        <option value="Reviewing">Reviewing</option>
+                                        <option value="Bug Fixing">Bug Fixing</option>
+                                        <option value="Testing">Testing</option>
+                                        <option value="Reprocess">Reprocess</option>
+                                        <option value="Waiting to Integrate">Waiting to Integrate</option>
+                                        <option value="Staging Passed">Staging Passed</option>
+                                        <option value="Completed">Completed</option>
                                     </select>
                                 </div>
                                 <button
@@ -551,12 +581,22 @@ export function NextSprintPlanningView({
                                                 </div>
                                                 <div className="col-span-2 space-y-1.5">
                                                     <label className="text-[9px] uppercase tracking-wider text-zinc-500 font-semibold block">Sprint Goal</label>
-                                                    <textarea 
+                                                    <select 
                                                         value={draft.targetSprintGoal}
                                                         onChange={e => updateDraft(draft.taskId, { targetSprintGoal: e.target.value })}
-                                                        className="w-full bg-zinc-950 border border-zinc-700 text-xs text-zinc-200 px-3 py-2 rounded focus:border-emerald-500 focus:outline-none transition-colors min-h-[50px] resize-y custom-scrollbar leading-relaxed"
-                                                        placeholder="What is the objective for this task next sprint?"
-                                                    />
+                                                        className="w-full bg-zinc-950 border border-zinc-700 text-xs text-zinc-200 px-2 py-1.5 rounded focus:border-emerald-500 focus:outline-none transition-colors appearance-none"
+                                                    >
+                                                        <option value="">(Empty / Ignore)</option>
+                                                        <option value="Not Started">Not Started</option>
+                                                        <option value="In Process">In Process</option>
+                                                        <option value="Reviewing">Reviewing</option>
+                                                        <option value="Bug Fixing">Bug Fixing</option>
+                                                        <option value="Testing">Testing</option>
+                                                        <option value="Reprocess">Reprocess</option>
+                                                        <option value="Waiting to Integrate">Waiting to Integrate</option>
+                                                        <option value="Staging Passed">Staging Passed</option>
+                                                        <option value="Completed">Completed</option>
+                                                    </select>
                                                 </div>
                                             </div>
                                         </div>
