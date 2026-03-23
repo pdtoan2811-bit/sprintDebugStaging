@@ -92,6 +92,7 @@ export interface TaskAnalysis {
     recordLink: string;
     blockedBy?: string;
     isMovedToNextSprint?: boolean;
+    sprint: string;
 }
 
 export interface InterrogationLogEntry {

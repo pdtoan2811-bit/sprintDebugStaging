@@ -116,13 +116,16 @@ function computePersonMeetingData(
     analyses: Record<string, TaskAnalysis>,
     meetingNotes: Record<string, MeetingNote[]>,
     rawLogs: RawLogEvent[],
-    sprintStartSnapshot: Record<string, string>
+    sprintStartSnapshot: Record<string, string>,
+    activeSprint: string
 ): PersonMeetingData[] {
     const personMap: Record<string, TaskCategory> = {};
     const personAllTasks: Record<string, TaskAnalysis[]> = {};
     const blockingTasksByBlocker: Record<string, Set<string>> = {};
 
     Object.values(analyses).forEach((task) => {
+        if (activeSprint && String(task.sprint) !== String(activeSprint)) return;
+
         const notes = meetingNotes[task.taskId] || [];
         const latestNote = getLatestMeetingNote(notes);
 
@@ -146,7 +149,7 @@ function computePersonMeetingData(
     Object.values(analyses).forEach((task) => {
         // Exclude only fully completed tasks from the daily meeting view.
         // Tasks in "Staging Passed" should still appear so they can be discussed.
-        if (task.currentStatus === 'Completed') {
+        if (task.currentStatus === 'Completed' || (activeSprint && String(task.sprint) !== String(activeSprint))) {
             return;
         }
 
@@ -1999,6 +2002,7 @@ interface SquadsViewProps {
     selectedDate: Date;
     allPersonData: PersonMeetingData[];
     roles: Record<string, string>;
+    activeSprint: string;
 }
 
 function SquadsView({
@@ -2011,6 +2015,7 @@ function SquadsView({
     selectedDate,
     allPersonData,
     roles,
+    activeSprint,
 }: SquadsViewProps) {
     const [selectedPersonsFilter, setSelectedPersonsFilter] = useState<Set<string>>(new Set());
     const [dragOverTodo, setDragOverTodo] = useState(false);
@@ -2103,37 +2108,35 @@ function SquadsView({
         setTimeout(() => setSendResult(null), 3000);
     }, [sending, squadMembers, dateStr, dailyTodos, analyses, meetingNotes, allPersonData]);
 
-    // Compute derived tasks for Backlog
+    // Compute derived tasks for Backlog (aligned with NextSprintPlanningView approach)
     const { combinationBacklogs, individualBacklog } = useMemo(() => {
+        if (squadMembers.length === 0) return { combinationBacklogs: [], individualBacklog: {} as Record<string, TaskAnalysis[]> };
+
         const combinations = new Map<string, TaskAnalysis[]>();
         const individual: Record<string, TaskAnalysis[]> = {};
         squadMembers.forEach(sm => individual[sm] = []);
 
-        const uniqueTasks = new Map<string, TaskAnalysis>();
-        squadMembers.forEach(sm => {
-            const data = allPersonData.find(p => p.person === sm);
-            if (data) {
-                data.allTasks.forEach(t => {
-                    if (taskInVisibleCategory(t.taskId, data, categoryFilter)) {
-                        uniqueTasks.set(t.taskId, t);
-                    }
-                });
-            }
+        // Use all uncompleted, sprint-filtered tasks — same approach as NextSprintPlanningView
+        const uncompletedTasks: TaskAnalysis[] = [];
+        Object.values(analyses).forEach(task => {
+            if (task.currentStatus === 'Completed') return;
+            if (activeSprint && String(task.sprint) !== String(activeSprint)) return;
+            uncompletedTasks.push(task);
         });
 
-        uniqueTasks.forEach(task => {
-            // Robustly determine which squad members are involved with this task
-            const involved = squadMembers.filter(sm => {
-                const data = allPersonData.find(p => p.person === sm);
-                return data?.allTasks.some(t => t.taskId === task.taskId);
-            });
-            
+        uncompletedTasks.forEach(task => {
+            // Use currentPerson directly (same as NextSprintPlanningView)
+            const assignees = task.currentPerson ? task.currentPerson.split(',').map(p => p.trim()).filter(Boolean) : [];
+            const involved = squadMembers.filter(sm => assignees.includes(sm));
+
+            if (involved.length === 0) return; // Task not assigned to any squad member
+
             // Check if fully planned by all involved squad members
-            const isFullyPlanned = involved.length > 0 && involved.every(sm => {
+            const isFullyPlanned = involved.every(sm => {
                 const todos = dailyTodos.getTodosForPersonDate(sm, dateStr);
                 return todos.some(todo => todo.taskId === task.taskId);
             });
-            
+
             if (isFullyPlanned) return; // Skip if fully planned
 
             if (involved.length > 1) {
@@ -2169,7 +2172,7 @@ function SquadsView({
         });
 
         return { combinationBacklogs: combinationArray, individualBacklog: individual };
-    }, [allPersonData, squadMembers, categoryFilter, dailyTodos, dateStr]);
+    }, [analyses, squadMembers, activeSprint, dailyTodos, dateStr]);
 
     // Compute derived tasks for Squad Plan
     const { combinationPlans, individualPlans } = useMemo(() => {
@@ -2181,7 +2184,7 @@ function SquadsView({
             const todos = dailyTodos.getTodosForPersonDate(sm, dateStr);
             todos.forEach(todo => {
                 const task = analyses[todo.taskId];
-                if (!task) return;
+                if (!task || (activeSprint && String(task.sprint) !== String(activeSprint))) return;
 
                 // Robustly check who in the squad has this planned
                 const involved = squadMembers.filter(m => {
@@ -2605,8 +2608,8 @@ export function DailyMeetingView({
     onTaskClick,
 }: DailyMeetingViewProps) {
     const personData = useMemo(
-        () => computePersonMeetingData(analyses, meetingNotes, rawLogs, sprintStartSnapshot),
-        [analyses, meetingNotes, rawLogs, sprintStartSnapshot]
+        () => computePersonMeetingData(analyses, meetingNotes, rawLogs, sprintStartSnapshot, activeSprint),
+        [analyses, meetingNotes, rawLogs, sprintStartSnapshot, activeSprint]
     );
 
     const dailyTodos = useDailyTodos();
@@ -2973,6 +2976,7 @@ export function DailyMeetingView({
                     selectedDate={selectedDate}
                     allPersonData={personData}
                     roles={roles}
+                    activeSprint={activeSprint}
                 />
             ) : showCompare && currentPersonData ? (
                 <CompareView

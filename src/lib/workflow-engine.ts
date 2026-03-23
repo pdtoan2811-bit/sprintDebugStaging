@@ -169,6 +169,7 @@ export function analyzeTask(taskLogs: RawLogEvent[], taskNotes: MeetingNote[] = 
         recordLink: latest.recordLink,
         blockedBy,
         isMovedToNextSprint,
+        sprint: String(latest.sprint || ''),
     };
 }
 
